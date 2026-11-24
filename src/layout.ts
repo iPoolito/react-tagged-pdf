@@ -2,7 +2,7 @@
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
 import type { Block, DocumentModel, TextKind } from './model.js';
-import type { TextStyle } from './style.js';
+import type { BoxStyle, TextStyle } from './style.js';
 
 /** Measures text set in one resolved text style. */
 export type Measurer = {
@@ -18,38 +18,65 @@ export type PageGeometry = { width: number; height: number; margin: number };
 
 /** `y` is the top of the glyph box, as PDFKit's `text(str, x, y)` expects. */
 export type Line = { text: string; x: number; y: number };
-export type LaidOutText = { kind: TextKind; lang?: string; style: TextStyle; lines: Line[] };
-export type LaidOutSection = { kind: 'Sect'; lang?: string; children: LaidOutBlock[] };
+/** A block's border box (top-left origin) and what to paint on it. Absent when there is nothing to paint. */
+export type Frame = { x: number; y: number; width: number; height: number; box: BoxStyle };
+export type LaidOutText = { kind: TextKind; lang?: string; style: TextStyle; frame?: Frame; lines: Line[] };
+export type LaidOutSection = { kind: 'Sect'; lang?: string; frame?: Frame; children: LaidOutBlock[] };
 export type LaidOutBlock = LaidOutText | LaidOutSection;
 export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
 
 /** A4 in points with 1-inch margins. */
 export const DEFAULT_PAGE: PageGeometry = { width: 595.28, height: 841.89, margin: 72 };
-/** Vertical gap after each paragraph, in points. */
-const PARAGRAPH_GAP = 6;
 
+/**
+ * Block flow with a CSS-like box model: margin, border, padding, content. Vertical
+ * margins of adjacent blocks add up (no margin collapsing).
+ */
 export function layoutDocument(model: DocumentModel, measureFor: Measure): LaidOutPage[] {
   return model.pages.map((page) => {
     const geometry = DEFAULT_PAGE;
-    const maxWidth = geometry.width - 2 * geometry.margin;
     const bottom = geometry.height - geometry.margin;
     let y = geometry.margin;
-    const place = (block: Block): LaidOutBlock => {
-      if (block.kind === 'Sect') return { kind: 'Sect', lang: block.lang, children: block.children.map(place) };
-      const measure = measureFor(block.style);
-      const lineBox = block.style.lineHeight ?? measure.lineHeight;
-      // Center the glyph box in the line box (half-leading); Line.y is the top of the glyph box.
-      const halfLeading = (lineBox - measure.lineHeight) / 2;
-      const lines = wrap(block.text, maxWidth, measure).map((text) => {
-        const line = { text, x: geometry.margin, y: y + halfLeading };
-        y += lineBox;
-        return line;
-      });
-      y += PARAGRAPH_GAP;
-      return { kind: block.kind, lang: block.lang, style: block.style, lines };
+    // Lowest border-box edge so far; trailing bottom margins may run into the page margin.
+    let contentBottom = y;
+
+    const place = (block: Block, x: number, width: number): LaidOutBlock => {
+      const { margin, padding, borderWidth: border } = block.box;
+      y += margin.top;
+      const top = y;
+      const outerX = x + margin.left;
+      const outerWidth = width - margin.left - margin.right;
+      const innerX = outerX + border + padding.left;
+      const innerWidth = outerWidth - 2 * border - padding.left - padding.right;
+      y += border + padding.top;
+
+      let laidOut: LaidOutBlock;
+      if (block.kind === 'Sect') {
+        laidOut = { kind: 'Sect', lang: block.lang, children: block.children.map((c) => place(c, innerX, innerWidth)) };
+      } else {
+        const measure = measureFor(block.style);
+        const lineBox = block.style.lineHeight ?? measure.lineHeight;
+        // Center the glyph box in the line box (half-leading).
+        const halfLeading = (lineBox - measure.lineHeight) / 2;
+        const lines = wrap(block.text, innerWidth, measure).map((text) => {
+          const line = { text, x: innerX, y: y + halfLeading };
+          y += lineBox;
+          return line;
+        });
+        laidOut = { kind: block.kind, lang: block.lang, style: block.style, lines };
+      }
+
+      y += padding.bottom + border;
+      contentBottom = Math.max(contentBottom, y);
+      if (border > 0 || block.box.backgroundColor) {
+        laidOut.frame = { x: outerX, y: top, width: outerWidth, height: y - top, box: block.box };
+      }
+      y += margin.bottom;
+      return laidOut;
     };
-    const blocks = page.blocks.map(place);
-    if (y - PARAGRAPH_GAP > bottom) {
+
+    const blocks = page.blocks.map((b) => place(b, geometry.margin, geometry.width - 2 * geometry.margin));
+    if (contentBottom > bottom) {
       throw new Error('Page content does not fit on one page; flowing content across pages is not supported yet.');
     }
     return { geometry, blocks };

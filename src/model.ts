@@ -2,15 +2,24 @@
 // detected before layout are raised here, with the offending component named.
 import { HostType } from './components.js';
 import type { HostElement, HostNode } from './reconciler.js';
-import { type InheritedText, inheritText, parseStyle, ROOT_TEXT, resolveText, type TextStyle } from './style.js';
+import {
+  type BoxStyle,
+  type InheritedText,
+  inheritText,
+  parseStyle,
+  ROOT_TEXT,
+  resolveBox,
+  resolveText,
+  type TextStyle,
+} from './style.js';
 
 /** Structure tag of a text block; layout and paint carry it through to the PDF structure tree. */
 export type TextKind = 'P' | 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6';
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | 'Sect';
 /** `lang` is the element's own `Lang` attribute; absent means inherited from the parent structure element. */
-export type TextBlock = { kind: TextKind; text: string; lang?: string; style: TextStyle };
-export type SectionBlock = { kind: 'Sect'; children: Block[]; lang?: string };
+export type TextBlock = { kind: TextKind; text: string; lang?: string; style: TextStyle; box: BoxStyle };
+export type SectionBlock = { kind: 'Sect'; children: Block[]; lang?: string; box: BoxStyle };
 export type Block = TextBlock | SectionBlock;
 export type PageModel = { blocks: Block[] };
 export type DocumentModel = {
@@ -103,10 +112,11 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText): Bloc
     const own = parseStyle(node.props.style, nameOf(node));
     if (textKind) {
       const style = resolveText(inheritText(inherited, own, textKind));
-      return { kind: textKind, text: collectText(node), style, ...common };
+      return { kind: textKind, text: collectText(node), style, box: resolveBox(own, textKind), ...common };
     }
     if (node.type === HostType.Section) {
-      return { kind: 'Sect', children: toBlocks(node, inheritText(inherited, own)), ...common };
+      const children = toBlocks(node, inheritText(inherited, own));
+      return { kind: 'Sect', children, box: resolveBox(own), ...common };
     }
   }
   throw new Error(`<${parent}> may only contain <P>, <H1>–<H6> and <Section> children, found ${describe(node)}.`);

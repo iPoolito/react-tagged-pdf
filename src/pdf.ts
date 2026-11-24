@@ -2,7 +2,7 @@
 // level is configured in createPdfDocument(); keep the workarounds there.
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
-import type { LaidOutBlock, LaidOutPage, Measure } from './layout.js';
+import type { Frame, LaidOutBlock, LaidOutPage, Measure } from './layout.js';
 import type { TextStyle } from './style.js';
 
 const DEFAULT_FONT_PATH = fileURLToPath(new URL('../fonts/NotoSans-Regular.ttf', import.meta.url));
@@ -74,6 +74,8 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
 }
 
 function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void {
+  // Decoration first, while no structure content is open (artifact marking would close it).
+  if (block.frame) paintFrame(doc, block.frame);
   const elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
   parent.add(elem);
   if (block.kind === 'Sect') {
@@ -88,6 +90,20 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void 
     elem.add(content);
   }
   elem.end();
+}
+
+/** Background and border are decoration: Layout artifacts, absent from the structure tree. */
+function paintFrame(doc: PdfDoc, { x, y, width, height, box }: Frame): void {
+  doc.markContent('Artifact', { type: 'Layout' });
+  doc.save();
+  if (box.backgroundColor) doc.rect(x, y, width, height).fill(box.backgroundColor);
+  const b = box.borderWidth;
+  if (b > 0) {
+    // Stroke centered on a rect inset by half the width keeps the border inside the border box.
+    doc.lineWidth(b).rect(x + b / 2, y + b / 2, width - b, height - b).stroke(box.borderColor);
+  }
+  doc.restore();
+  doc.endMarkedContent();
 }
 
 export function toBuffer(doc: PdfDoc): Promise<Buffer> {
