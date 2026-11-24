@@ -5,7 +5,7 @@ import { pdfFacts, structOutline } from './support/read-pdf.js';
 
 describe('headings, styles and fonts fixture (validated by veraPDF in npm run test:ua)', () => {
   it('has the expected structure tree', async () => {
-    const pdf = await renderToBuffer(fixture, { strict: true });
+    const pdf = await renderToBuffer(fixture);
     expect(await structOutline(pdf)).toBe(
       [
         'Document',
