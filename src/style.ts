@@ -17,6 +17,11 @@ export type Style = {
   color?: string;
   /** Inherited. Height of each line box in points (not a multiplier). Default: the font's natural line height. */
   lineHeight?: number;
+  /**
+   * Inherited. `'underline'` draws a line under the text, placed and sized from the font's underline
+   * metrics. Default `'none'`, except inside `<Link>`, which is underlined unless set to `'none'`.
+   */
+  textDecoration?: TextDecoration;
 
   /** Not inherited. Outer spacing on all four sides, in points; per-side properties override it. */
   margin?: number;
@@ -38,6 +43,8 @@ export type Style = {
   backgroundColor?: string;
 };
 
+export type TextDecoration = 'underline' | 'none';
+
 export type Sides = { top: number; right: number; bottom: number; left: number };
 /** Resolved box properties of one block. Borders and backgrounds are painted as Layout artifacts. */
 export type BoxStyle = {
@@ -49,11 +56,21 @@ export type BoxStyle = {
 };
 
 /** Fully resolved text style of a block or of one run of its text. */
-export type TextStyle = { font: FontFace; fontSize: number; color: string; lineHeight?: number };
+export type TextStyle = {
+  font: FontFace;
+  fontSize: number;
+  color: string;
+  lineHeight?: number;
+  textDecoration: TextDecoration;
+};
 
 /** Whether two resolved text styles look the same. Compares every `TextStyle` field. */
 export const sameStyle = (a: TextStyle, b: TextStyle) =>
-  a.font === b.font && a.fontSize === b.fontSize && a.color === b.color && a.lineHeight === b.lineHeight;
+  a.font === b.font &&
+  a.fontSize === b.fontSize &&
+  a.color === b.color &&
+  a.lineHeight === b.lineHeight &&
+  a.textDecoration === b.textDecoration;
 
 /** Inherited text properties before font resolution. */
 export type InheritedText = {
@@ -63,6 +80,7 @@ export type InheritedText = {
   fontStyle: FontStyle;
   color: string;
   lineHeight?: number;
+  textDecoration: TextDecoration;
 };
 
 export const ROOT_TEXT: InheritedText = {
@@ -71,6 +89,7 @@ export const ROOT_TEXT: InheritedText = {
   fontWeight: 400,
   fontStyle: 'normal',
   color: 'black',
+  textDecoration: 'none',
 };
 
 /** Built-in styles per element, applied under the author's `style` (like a browser's default stylesheet). */
@@ -100,6 +119,7 @@ const STYLE_CHECKS: Record<keyof Style, Check> = {
   fontStyle: (v) => (v === 'normal' || v === 'italic' ? undefined : "must be 'normal' or 'italic'"),
   color,
   lineHeight: length,
+  textDecoration: (v) => (v === 'underline' || v === 'none' ? undefined : "must be 'underline' or 'none'"),
   margin: length,
   marginTop: length,
   marginRight: length,
@@ -133,7 +153,7 @@ export function parseStyle(raw: unknown, owner: string): Style {
   return raw as Style;
 }
 
-const INLINE_KEYS = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'color'] as const;
+const INLINE_KEYS = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'color', 'textDecoration'] as const;
 
 /**
  * Text properties an inline element may set. Box properties (margin, padding, border,
@@ -166,6 +186,7 @@ export function inheritText(parent: InheritedText, own: Style, kind?: TextKind):
     fontStyle: merged.fontStyle ?? parent.fontStyle,
     color: merged.color ?? parent.color,
     lineHeight: merged.lineHeight ?? parent.lineHeight,
+    textDecoration: merged.textDecoration ?? parent.textDecoration,
   };
 }
 
@@ -174,6 +195,7 @@ export const resolveText = (t: InheritedText): TextStyle => ({
   fontSize: t.fontSize,
   color: t.color,
   ...(t.lineHeight === undefined ? {} : { lineHeight: t.lineHeight }),
+  textDecoration: t.textDecoration,
 });
 
 const sides = (all: number | undefined, top?: number, right?: number, bottom?: number, left?: number): Sides => ({

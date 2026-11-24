@@ -21,16 +21,21 @@ export type Measurer = {
   lineHeight: number;
   /** Distance from the top of the glyph box to the baseline, in points. */
   ascent: number;
+  /** The font's underline: distance from the baseline down to its top, and its thickness, in points. */
+  underline: { offset: number; thickness: number };
 };
 
 /** Metrics provider: layout and paint must use the same fonts. */
 export type Measure = (style: TextStyle) => Measurer;
 
+/** A filled rectangle under a fragment's text (top-left origin), present when its run is underlined. */
+export type Underline = { y: number; thickness: number };
 /**
  * A piece of one line set in one run's style. `y` is the top of its glyph box, as PDFKit's
  * `text(str, x, y)` expects; fragments of different sizes on a line share one baseline.
+ * An underline spans the fragment's width: line ends carry no trailing spaces, so neither does it.
  */
-export type Fragment = { text: string; x: number; y: number; width: number; run: TextRun };
+export type Fragment = { text: string; x: number; y: number; width: number; run: TextRun; underline?: Underline };
 /** One line box: its top and height, and its fragments from left to right. */
 export type Line = { top: number; height: number; fragments: Fragment[] };
 /**
@@ -269,7 +274,10 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       const fragments = pieces.map((p): Fragment => {
         const run = runs[p.runIndex]!;
         const metrics = measure(run.style);
-        const fragment = { text: p.text, x, y: baseline - metrics.ascent, width: metrics.widthOf(p.text), run };
+        const fragment: Fragment = { text: p.text, x, y: baseline - metrics.ascent, width: metrics.widthOf(p.text), run };
+        if (run.style.textDecoration === 'underline') {
+          fragment.underline = { y: baseline + metrics.underline.offset, thickness: metrics.underline.thickness };
+        }
         x += fragment.width;
         return fragment;
       });

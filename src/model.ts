@@ -293,7 +293,10 @@ function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
     );
   }
   const target: LinkTarget = { href, contents: '' };
-  const runs = collectRuns(el, inheritText(inherited, parseInlineStyle(el.props.style, 'Link')), target);
+  const own = parseInlineStyle(el.props.style, 'Link');
+  // Links are underlined unless the author says otherwise, so they never rely on color alone (WCAG 1.4.1).
+  const style = { ...own, textDecoration: own.textDecoration ?? 'underline' };
+  const runs = collectRuns(el, inheritText(inherited, style), target);
   const visible = textOf(runs).replace(/\s+/g, ' ').trim();
   if (!visible) {
     throw new Error(`<Link> href ${JSON.stringify(href)} has no visible text; put the link text inside <Link>.`);

@@ -278,3 +278,69 @@ export async function linkAnnotations(bytes: Uint8Array): Promise<LinkAnnotation
   });
   return out;
 }
+
+export type PaintedRect = {
+  /** 1-based page. */
+  page: number;
+  /** Tag of the innermost marked-content sequence the rectangle is drawn in (`Link`, `P`, `Artifact`, …); undefined when untagged. */
+  tag: string | undefined;
+  /** Bounds in PDF user space (origin bottom left). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type Matrix = [number, number, number, number, number, number];
+const multiply = (m: Matrix, n: Matrix): Matrix => [
+  m[0] * n[0] + m[1] * n[2],
+  m[0] * n[1] + m[1] * n[3],
+  m[2] * n[0] + m[3] * n[2],
+  m[2] * n[1] + m[3] * n[3],
+  m[4] * n[0] + m[5] * n[2] + n[4],
+  m[4] * n[1] + m[5] * n[3] + n[5],
+];
+
+/**
+ * Every rectangle (`re`) drawn on every page, with the marked-content tag it is drawn inside and
+ * its bounds after the current transformation matrix. Assumes one operator per line, as PDFKit writes.
+ */
+export async function paintedRects(bytes: Uint8Array): Promise<PaintedRect[]> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const out: PaintedRect[] = [];
+  for (let page = 1; page <= doc.getPageCount(); page++) {
+    let ctm: Matrix = [1, 0, 0, 1, 0, 0];
+    const saved: Matrix[] = [];
+    const tags: (string | undefined)[] = [];
+    // Marked-content property dictionaries span lines (`/P <<\n/MCID 0\n>> BDC`): fold them first.
+    const content = (await pageContent(bytes, page)).replace(/<<[\s\S]*?>>/g, '<<>>');
+    for (const line of content.split('\n')) {
+      const tokens = line.trim().split(/\s+/);
+      const op = tokens.at(-1);
+      const nums = tokens.slice(0, -1).map(Number);
+      if (op === 'q') saved.push(ctm);
+      else if (op === 'Q') ctm = saved.pop() ?? [1, 0, 0, 1, 0, 0];
+      else if (op === 'cm' && nums.length === 6) ctm = multiply(nums as Matrix, ctm);
+      else if (op === 'BDC' || op === 'BMC') tags.push(tokens[0]!.replace(/^\//, ''));
+      else if (op === 'EMC') tags.pop();
+      else if (op === 're' && nums.length === 4) {
+        const [x, y, w, h] = nums as [number, number, number, number];
+        const corners = [
+          [x, y],
+          [x + w, y + h],
+        ].map(([px, py]) => [ctm[0] * px! + ctm[2] * py! + ctm[4], ctm[1] * px! + ctm[3] * py! + ctm[5]]);
+        const xs = corners.map((c) => c[0]!);
+        const ys = corners.map((c) => c[1]!);
+        out.push({
+          page,
+          tag: tags.at(-1),
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        });
+      }
+    }
+  }
+  return out;
+}

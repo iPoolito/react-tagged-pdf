@@ -58,16 +58,27 @@ export function createPdfDocument(meta: { title: string; lang: string }): PdfDoc
   return doc;
 }
 
+/** The parts of PDFKit's embedded font (and its fontkit font) that measuring reads. */
+type EmbeddedFont = {
+  ascender: number;
+  font: { unitsPerEm: number; underlinePosition: number; underlineThickness: number };
+};
+
 export function measurerFor(doc: PdfDoc): Measure {
   return (style) => {
     useFont(doc, style);
     const lineHeight = doc.currentLineHeight(true);
     // PDFKit's text(str, x, y) puts the baseline this far below y.
-    const ascent = ((doc as unknown as { _font: { ascender: number } })._font.ascender / 1000) * style.fontSize;
+    const font = (doc as unknown as { _font: EmbeddedFont })._font;
+    const ascent = (font.ascender / 1000) * style.fontSize;
+    // The post table's underline position is the top of the underline, negative below the baseline.
+    const perUnit = style.fontSize / font.font.unitsPerEm;
+    const underline = { offset: -font.font.underlinePosition * perUnit, thickness: font.font.underlineThickness * perUnit };
     return {
       widthOf: (text) => useFont(doc, style).widthOfString(text),
       lineHeight,
       ascent,
+      underline,
     };
   };
 }
@@ -134,7 +145,7 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
   };
 
   for (const line of block.lines) {
-    for (const { text, x, y, run } of line.fragments) {
+    for (const { text, x, y, width, run, underline } of line.fragments) {
       if (!open || open.link !== run.link) {
         // Close first: the block's text before a link must precede the Link element among its kids.
         close();
@@ -143,6 +154,8 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
       }
       useFont(doc, run.style).fillColor(run.style.color);
       doc.text(text, x, y, { lineBreak: false });
+      // Inside the same marked content as the text it decorates: never untagged.
+      if (underline) doc.rect(x, underline.y, width, underline.thickness).fill(run.style.color);
     }
     for (const { link, x, width } of linkSpans(line)) {
       // @types/pdfkit lacks structParent; passing a variable (not a literal) skips the excess-property check.

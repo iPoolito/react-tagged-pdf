@@ -137,7 +137,7 @@ describe('Span errors', () => {
       ),
     ).rejects.toThrow(
       '<Span> `style.padding` is not supported on inline elements; use it on the enclosing block. ' +
-        'Inline styles support fontFamily, fontSize, fontWeight, fontStyle, color.',
+        'Inline styles support fontFamily, fontSize, fontWeight, fontStyle, color, textDecoration.',
     );
   });
 
