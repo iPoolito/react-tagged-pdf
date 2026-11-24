@@ -27,7 +27,7 @@
     "example": "tsx examples/hello.tsx"
   },
   "peerDependencies": {
-    "react": "^19.3.0"
+    "react": "~19.3.0"
   },
   "dependencies": {
     "linebreak": "^2.0.0",
