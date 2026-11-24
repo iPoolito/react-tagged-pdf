@@ -3,13 +3,14 @@
 // any rule failure. Requires Docker.
 import { spawnSync } from 'node:child_process';
 import { mkdir, readdir, rm } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { basename, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { ReactNode } from 'react';
 import { renderToFile } from '../src/index.js';
 
 const VERAPDF_IMAGE = process.env.VERAPDF_IMAGE ?? 'verapdf/cli:v1.30.4';
-const root = resolve(import.meta.dirname, '..');
+// fileURLToPath rather than import.meta.dirname, which needs Node >=20.11.
+const root = fileURLToPath(new URL('..', import.meta.url));
 const fixturesDir = join(root, 'test', 'fixtures');
 const outDir = join(root, 'test-output', 'ua');
 

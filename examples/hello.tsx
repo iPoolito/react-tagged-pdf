@@ -1,10 +1,11 @@
 // Run with `npm run example`, then open test-output/hello.pdf.
 import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Document, P, Page, renderToFile } from '../src/index.js';
 
-const out = resolve(import.meta.dirname, '..', 'test-output', 'hello.pdf');
-await mkdir(resolve(out, '..'), { recursive: true });
+const out = fileURLToPath(new URL('../test-output/hello.pdf', import.meta.url));
+await mkdir(dirname(out), { recursive: true });
 
 await renderToFile(
   <Document title="Hello from react-tagged-pdf" lang="en-US">
