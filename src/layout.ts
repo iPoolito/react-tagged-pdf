@@ -1,7 +1,7 @@
 // Layout pass: block flow on a single page, greedy line wrapping at UAX #14
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
-import type { DocumentModel } from './model.js';
+import type { BlockKind, DocumentModel } from './model.js';
 
 export type Measurer = {
   widthOf(text: string): number;
@@ -12,7 +12,7 @@ export type Measurer = {
 export type PageGeometry = { width: number; height: number; margin: number };
 
 export type Line = { text: string; x: number; y: number };
-export type LaidOutBlock = { kind: 'P'; lines: Line[] };
+export type LaidOutBlock = { kind: BlockKind; lines: Line[] };
 export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
 
 /** A4 in points with 1-inch margins. */

@@ -3,6 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import type { LaidOutPage, Measurer } from './layout.js';
+import type { BlockKind } from './model.js';
 
 const DEFAULT_FONT = 'NotoSans';
 const DEFAULT_FONT_PATH = fileURLToPath(new URL('../fonts/NotoSans-Regular.ttf', import.meta.url));
@@ -55,9 +56,10 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
     const { width, height, margin } = page.geometry;
     doc.addPage({ size: [width, height], margin });
     for (const block of page.blocks) {
-      const elem = doc.struct(block.kind);
+      const tag: BlockKind = block.kind;
+      const elem = doc.struct(tag);
       root.add(elem);
-      const content = doc.markStructureContent(block.kind);
+      const content = doc.markStructureContent(tag);
       useDefaultFont(doc);
       for (const line of block.lines) {
         if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });

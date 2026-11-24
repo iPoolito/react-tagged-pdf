@@ -3,16 +3,16 @@
 import { HostType } from './components.js';
 import type { HostElement, HostNode } from './reconciler.js';
 
-export type ParagraphBlock = { kind: 'P'; text: string };
+/** Structure tag of a block-level element; layout and paint carry it through to the PDF structure tree. */
+export type BlockKind = 'P';
+export type ParagraphBlock = { kind: BlockKind; text: string };
 export type Block = ParagraphBlock;
 export type PageModel = { blocks: Block[] };
 export type DocumentModel = { title: string; lang: string; pages: PageModel[] };
 
-const componentName: Record<string, string> = {
-  [HostType.Document]: 'Document',
-  [HostType.Page]: 'Page',
-  [HostType.P]: 'P',
-};
+const componentName: Record<string, string> = Object.fromEntries(
+  Object.entries(HostType).map(([name, type]) => [type, name]),
+);
 const nameOf = (node: HostNode) => (node.kind === 'text' ? 'text' : (componentName[node.type] ?? node.type));
 
 const isBlank = (node: HostNode) => node.kind === 'text' && node.text.trim() === '';
@@ -20,7 +20,7 @@ const isBlank = (node: HostNode) => node.kind === 'text' && node.text.trim() ===
 function requireString(el: HostElement, prop: string, why: string): string {
   const value = el.props[prop];
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`<Document> requires a non-empty \`${prop}\` prop: ${why}`);
+    throw new Error(`<${nameOf(el)}> requires a non-empty \`${prop}\` prop: ${why}`);
   }
   return value;
 }
@@ -31,8 +31,9 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
   if (content.length !== 1 || !root || root.kind !== 'element' || root.type !== HostType.Document) {
     throw new Error('The element passed to renderToBuffer/renderToFile must be a single <Document> at the root.');
   }
-  const title = requireString(root, 'title', 'PDF/UA requires a document title (dc:title), e.g. <Document title="Invoice 42" lang="en-US">.');
-  const lang = requireString(root, 'lang', 'PDF/UA requires the document language, e.g. <Document title="Invoice 42" lang="en-US">.');
+  const example = 'e.g. <Document title="Invoice 42" lang="en-US">.';
+  const title = requireString(root, 'title', `PDF/UA requires a document title (dc:title), ${example}`);
+  const lang = requireString(root, 'lang', `PDF/UA requires the document language, ${example}`);
 
   const pages: PageModel[] = [];
   for (const child of root.children) {
