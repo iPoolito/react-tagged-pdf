@@ -3,7 +3,7 @@
 import PDFDocument from 'pdfkit';
 import { DEFAULT_FONT_PATH } from './fonts.js';
 import type { Frame, LaidOutBlock, LaidOutPage, LaidOutText, Line, Measure } from './layout.js';
-import type { LinkTarget } from './model.js';
+import type { InlineElement, LinkTarget } from './model.js';
 import type { TextStyle } from './style.js';
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
@@ -120,13 +120,14 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
 }
 
 /**
- * Text is marked content of the block's element, except link text, which is marked content of
- * the link's own `Link` element (a child of the block's, in reading order). Each run of
- * consecutive fragments with the same owner is one marked-content sequence. Every line a link
- * occupies gets one link annotation, attached to the `Link` element (OBJR + StructParent).
+ * Text is marked content of the block's element, except text inside a tagged inline element
+ * (a `<Link>`, or a `<Span lang>`), which is marked content of that element's own structure
+ * element: a child of the enclosing inline element's, or of the block's, in reading order.
+ * Each run of consecutive fragments with the same owner is one marked-content sequence. Every
+ * line a link occupies gets one link annotation, attached to the `Link` element (OBJR + StructParent).
  */
 function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, elements: Map<object, StructElem>): void {
-  type Open = { link: LinkTarget | undefined; owner: StructElem; content: ReturnType<PdfDoc['markStructureContent']> };
+  type Open = { inline: InlineElement | undefined; owner: StructElem; content: ReturnType<PdfDoc['markStructureContent']> };
   let open: Open | undefined;
   const close = () => {
     if (!open) return;
@@ -134,23 +135,25 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
     open.owner.add(open.content);
     open = undefined;
   };
-  const linkElem = (link: LinkTarget) => {
-    let elem = elements.get(link);
+  /** The structure element of a tagged inline element, created (with its ancestors) on first use. */
+  const inlineElem = (inline: InlineElement): StructElem => {
+    let elem = elements.get(inline);
     if (!elem) {
-      elem = doc.struct('Link');
-      blockElem.add(elem);
-      elements.set(link, elem);
+      const parent = inline.parent ? inlineElem(inline.parent) : blockElem;
+      elem = doc.struct(inline.kind, inline.kind === 'Span' ? { lang: inline.lang } : {});
+      parent.add(elem);
+      elements.set(inline, elem);
     }
     return elem;
   };
 
   for (const line of block.lines) {
     for (const { text, x, y, width, run, underline } of line.fragments) {
-      if (!open || open.link !== run.link) {
-        // Close first: the block's text before a link must precede the Link element among its kids.
+      if (!open || open.inline !== run.inline) {
+        // Close first: text before an inline element must precede that element among its parent's kids.
         close();
-        const owner = run.link ? linkElem(run.link) : blockElem;
-        open = { link: run.link, owner, content: doc.markStructureContent(run.link ? 'Link' : block.kind) };
+        const owner = run.inline ? inlineElem(run.inline) : blockElem;
+        open = { inline: run.inline, owner, content: doc.markStructureContent(run.inline?.kind ?? block.kind) };
       }
       useFont(doc, run.style).fillColor(run.style.color);
       doc.text(text, x, y, { lineBreak: false });
@@ -160,7 +163,7 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
     for (const { link, x, width } of linkSpans(line)) {
       // @types/pdfkit lacks structParent; passing a variable (not a literal) skips the excess-property check.
       const options = {
-        structParent: linkElem(link),
+        structParent: inlineElem(link),
         // PDFKit's default is empty, which veraPDF rejects, so it is always the link text or the author's description.
         Contents: pdfTextString(link.contents),
       };

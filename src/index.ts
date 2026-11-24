@@ -19,4 +19,4 @@ export { renderToBuffer, renderToFile } from './render.js';
 export type { RenderOptions } from './render.js';
 export { Font } from './fonts.js';
 export type { FontSource, FontStyle, FontWeight } from './fonts.js';
-export type { Style } from './style.js';
+export type { Style, TextDecoration } from './style.js';

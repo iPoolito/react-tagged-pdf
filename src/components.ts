@@ -63,6 +63,12 @@ export type PProps = BlockProps;
 export type HeadingProps = BlockProps;
 
 export type SpanProps = {
+  /**
+   * Natural language of this run of text as a BCP 47 tag, e.g. `en-US`, when it differs from its
+   * paragraph's (a foreign phrase), so screen readers switch pronunciation. Makes the span a `Span`
+   * structure element with this `Lang`.
+   */
+  lang?: string;
   /** Overrides the inherited text style for this run of text, like CSS. */
   style?: InlineStyle;
   children?: ReactNode;
@@ -101,7 +107,8 @@ export function P(props: PProps) {
 
 /**
  * A run of text styled differently from the rest of its paragraph or heading: bold, italic,
- * another color, size or font. Adds no structure element; its text belongs to the enclosing block.
+ * another color, size, font or an underline. Without `lang` it adds no structure element and its
+ * text belongs to the enclosing block; with `lang` it is a `Span` structure element in reading order.
  */
 export function Span(props: SpanProps) {
   return createElement(HostType.Span, props);
@@ -119,14 +126,17 @@ export type LinkProps = {
    * Default: the link's visible text.
    */
   description?: string;
-  /** Overrides the inherited text style of the link text. */
+  /**
+   * Overrides the inherited text style of the link text. Links are underlined by default so they
+   * do not rely on color alone; `textDecoration: 'none'` turns that off. No link color is imposed.
+   */
   style?: InlineStyle;
   children?: ReactNode;
 };
 
 /**
- * An inline hyperlink to an external URL. Maps to a `Link` structure element that holds its
- * text and a reference to one link annotation per line it occupies.
+ * An inline hyperlink to an external URL, underlined by default. Maps to a `Link` structure
+ * element that holds its text and a reference to one link annotation per line it occupies.
  */
 export function Link(props: LinkProps) {
   return createElement(HostType.Link, props);

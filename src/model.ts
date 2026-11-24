@@ -24,10 +24,21 @@ export type BlockKind = TextKind | 'Sect';
 /**
  * One `<Link>`. Every run of the link refers to the same object, so its pieces on several
  * lines or pages become one structure element. `contents` is the annotation's `/Contents`.
+ * `parent` is the tagged inline element it sits in, if any.
  */
-export type LinkTarget = { href: string; contents: string };
-/** A stretch of a text block's content set in one resolved style, possibly inside a link. */
-export type TextRun = { text: string; style: TextStyle; link?: LinkTarget };
+export type LinkTarget = { kind: 'Link'; href: string; contents: string; parent?: InlineElement };
+/** One `<Span lang>`: a `Span` structure element with its own `Lang`. Untagged spans have none. */
+export type LangSpan = { kind: 'Span'; lang: string; parent?: InlineElement };
+/**
+ * An inline element that becomes a structure element of its own, a child of its `parent` or,
+ * at the top, of the enclosing block's element.
+ */
+export type InlineElement = LinkTarget | LangSpan;
+/**
+ * A stretch of a text block's content set in one resolved style. `inline` is the innermost
+ * tagged inline element it belongs to; `link` is the `<Link>` it is part of, at any depth.
+ */
+export type TextRun = { text: string; style: TextStyle; inline?: InlineElement; link?: LinkTarget };
 /**
  * `text` is all of the block's runs joined. `style` is the block's own text style (its line
  * height applies to every line). `lang` is the element's own `Lang` attribute; absent means
@@ -251,16 +262,22 @@ export function mergeAdjacent<T extends { text: string }>(
 
 /** Neighbouring runs that look the same become one run. */
 const mergeRuns = (runs: TextRun[]): TextRun[] =>
-  mergeAdjacent([], runs, (a, b) => a.link === b.link && sameStyle(a.style, b.style));
+  mergeAdjacent([], runs, (a, b) => a.inline === b.inline && sameStyle(a.style, b.style));
 
-/** The text of a block in document order, split into runs wherever the style or link changes. */
-function collectRuns(el: HostElement, inherited: InheritedText, link?: LinkTarget): TextRun[] {
+/** Where a run sits: the innermost tagged inline element, and the link around it. */
+type InlineContext = { inline?: InlineElement; link?: LinkTarget };
+
+/** The text of a block in document order, split into runs wherever the style or inline element changes. */
+function collectRuns(el: HostElement, inherited: InheritedText, context: InlineContext = {}): TextRun[] {
+  const { link } = context;
   return el.children.flatMap((c): TextRun[] => {
-    if (c.kind === 'text') return [{ text: c.text, style: resolveText(inherited), ...(link ? { link } : {}) }];
+    if (c.kind === 'text') return [{ text: c.text, style: resolveText(inherited), ...context }];
     if (c.type === HostType.Span) {
-      return collectRuns(c, inheritText(inherited, parseInlineStyle(c.props.style, 'Span')), link);
+      const lang = optionalLang(c);
+      const inner = lang ? { ...context, inline: { kind: 'Span', lang, ...parentOf(context) } satisfies LangSpan } : context;
+      return collectRuns(c, inheritText(inherited, parseInlineStyle(c.props.style, 'Span')), inner);
     }
-    if (c.type === HostType.Link && !link) return linkRuns(c, inherited);
+    if (c.type === HostType.Link && !link) return linkRuns(c, inherited, context);
     const allowed = link ? 'text and <Span>' : 'text, <Span> and <Link>';
     throw new Error(`<${nameOf(el)}> may only contain ${allowed}, found ${describe(c)}.`);
   });
@@ -270,7 +287,9 @@ const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 /** The only URL schemes a <Link> may point to; anything else (javascript:, file:, data:, …) is refused. */
 const ALLOWED_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:'];
 
-function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
+const parentOf = (context: InlineContext) => (context.inline ? { parent: context.inline } : {});
+
+function linkRuns(el: HostElement, inherited: InheritedText, context: InlineContext): TextRun[] {
   const href = requireString(el, 'href', 'an external URL such as "https://example.com".');
   if (!HAS_SCHEME.test(href) || !URL.canParse(href)) {
     throw new Error(
@@ -292,11 +311,11 @@ function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
         `got ${JSON.stringify(description)}. Leave it out to use the link text.`,
     );
   }
-  const target: LinkTarget = { href, contents: '' };
+  const target: LinkTarget = { kind: 'Link', href, contents: '', ...parentOf(context) };
   const own = parseInlineStyle(el.props.style, 'Link');
   // Links are underlined unless the author says otherwise, so they never rely on color alone (WCAG 1.4.1).
   const style = { ...own, textDecoration: own.textDecoration ?? 'underline' };
-  const runs = collectRuns(el, inheritText(inherited, style), target);
+  const runs = collectRuns(el, inheritText(inherited, style), { inline: target, link: target });
   const visible = textOf(runs).replace(/\s+/g, ' ').trim();
   if (!visible) {
     throw new Error(`<Link> href ${JSON.stringify(href)} has no visible text; put the link text inside <Link>.`);
