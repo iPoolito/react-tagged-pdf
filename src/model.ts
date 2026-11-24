@@ -11,7 +11,13 @@ export type TextBlock = { kind: TextKind; text: string };
 export type SectionBlock = { kind: 'Sect'; children: Block[] };
 export type Block = TextBlock | SectionBlock;
 export type PageModel = { blocks: Block[] };
-export type DocumentModel = { title: string; lang: string; pages: PageModel[] };
+export type DocumentModel = {
+  title: string;
+  lang: string;
+  pages: PageModel[];
+  /** Accessibility problems that do not stop rendering (errors in strict mode). */
+  warnings: string[];
+};
 
 const componentName: Record<string, string> = Object.fromEntries(
   Object.entries(HostType).map(([name, type]) => [type, name]),
@@ -47,7 +53,31 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     pages.push({ blocks: toBlocks(child) });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
-  return { title, lang, pages };
+  return { title, lang, pages, warnings: checkHeadingLevels(pages) };
+}
+
+/** Headings must start at H1 and never skip a level going down (PDF/UA-1, veraPDF rule 7.4.2-1). */
+function checkHeadingLevels(pages: PageModel[]): string[] {
+  const warnings: string[] = [];
+  let previous: TextBlock | undefined;
+  const label = (b: TextBlock) => `<${b.kind}> ${JSON.stringify(b.text.trim().slice(0, 40))}`;
+  const visit = (block: Block) => {
+    if (block.kind === 'Sect') return block.children.forEach(visit);
+    if (block.kind === 'P') return;
+    const level = Number(block.kind.slice(1));
+    if (!previous && level > 1) {
+      warnings.push(`Heading ${label(block)} is the first heading; PDF/UA expects the first heading to be an <H1>.`);
+    } else if (previous && level > Number(previous.kind.slice(1)) + 1) {
+      const skipped = Number(previous.kind.slice(1)) + 1;
+      warnings.push(
+        `Heading ${label(block)} follows ${label(previous)} and skips level ${skipped}; ` +
+          'PDF/UA does not allow skipped heading levels (use consecutive levels).',
+      );
+    }
+    previous = block;
+  };
+  pages.forEach((page) => page.blocks.forEach(visit));
+  return warnings;
 }
 
 const textKinds: Partial<Record<string, TextKind>> = {
