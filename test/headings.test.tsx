@@ -46,7 +46,7 @@ describe('headings and sections', () => {
       </Document>
     );
     await expect(renderToBuffer(element)).rejects.toThrow(
-      '<Section> may only contain <P>, <H1>–<H6> and <Section> children, found text "loose text".',
+      '<Section> may only contain <P>, <H1>–<H6>, <Section> and <PageBreak> children, found text "loose text".',
     );
   });
 

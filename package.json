@@ -25,7 +25,8 @@
     "test": "vitest run",
     "test:ua": "tsx scripts/test-ua.ts",
     "example": "tsx examples/hello.tsx",
-    "example:headings": "tsx examples/headings.tsx"
+    "example:headings": "tsx examples/headings.tsx",
+    "example:pages": "tsx examples/pages.tsx"
   },
   "peerDependencies": {
     "react": "~19.3.0"

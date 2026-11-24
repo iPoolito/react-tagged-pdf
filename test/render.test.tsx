@@ -63,16 +63,16 @@ describe('renderToBuffer', () => {
     expect(words(page!.runs.map((r) => r.str).join(' '))).toEqual(words(`${LONG_TEXT} A second, short paragraph.`));
   });
 
-  it('throws a clear error when content overflows the single page', async () => {
+  it('flows content that overflows one page onto further pages', async () => {
     const paragraphs = Array.from({ length: 80 }, (_, i) => <P key={i}>Paragraph {i + 1}</P>);
     const element = (
       <Document title="T" lang="en-US">
         <Page>{paragraphs}</Page>
       </Document>
     );
-    await expect(renderToBuffer(element)).rejects.toThrow(
-      'Page content does not fit on one page; flowing content across pages is not supported yet.',
-    );
+    const pages = await textRuns(await renderToBuffer(element));
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.flatMap((p) => p.runs.map((r) => r.str))).toEqual(paragraphs.map((_, i) => `Paragraph ${i + 1}`));
   });
 
   it('surfaces errors thrown by components while rendering', async () => {

@@ -10,6 +10,7 @@ const headingHostTypes = Object.fromEntries(HEADING_KINDS.map((kind) => [kind, `
 export const HostType = {
   Document: 'RTP_DOCUMENT',
   Page: 'RTP_PAGE',
+  PageBreak: 'RTP_PAGE_BREAK',
   Section: 'RTP_SECTION',
   P: 'RTP_P',
   ...headingHostTypes,
@@ -37,7 +38,21 @@ export type BlockProps = CommonProps & {
   style?: Style;
 };
 
-export type PageProps = CommonProps;
+/** Named paper sizes. */
+export type PageSizeName = 'A3' | 'A4' | 'A5' | 'Letter' | 'Legal';
+/** A named paper size, or `[width, height]` in points (e.g. `[841.89, 595.28]` for A4 landscape). */
+export type PageSize = PageSizeName | readonly [width: number, height: number];
+/** Points on all four sides, or per side (a side left out is 72). */
+export type PageMargin = number | { top?: number; right?: number; bottom?: number; left?: number };
+
+export type PageProps = CommonProps & {
+  /** Paper size. Default `'A4'`. */
+  size?: PageSize;
+  /** Page margins in points. Default 72 on every side. */
+  margin?: PageMargin;
+};
+/** `<PageBreak/>` takes no props and no children. */
+export type PageBreakProps = Record<string, never>;
 export type SectionProps = BlockProps;
 export type PProps = BlockProps;
 
@@ -48,9 +63,20 @@ export function Document(props: DocumentProps) {
   return createElement(HostType.Document, props);
 }
 
-/** A page (A4, 72 pt margins). Content flows top to bottom. */
+/**
+ * A page template: size and margins. Its content flows top to bottom onto as many
+ * physical pages as it needs; each `<Page>` starts on a new page.
+ */
 export function Page(props: PageProps) {
   return createElement(HostType.Page, props);
+}
+
+/**
+ * Starts the following content at the top of a new page. Allowed wherever a block is.
+ * Adds nothing to the structure tree; ignored when the current page has no content yet.
+ */
+export function PageBreak(props: PageBreakProps = {}) {
+  return createElement(HostType.PageBreak, props);
 }
 
 /** A group of related blocks, such as a heading and its paragraphs. Maps to the `Sect` structure element. */

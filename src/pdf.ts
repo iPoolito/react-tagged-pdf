@@ -70,25 +70,36 @@ export function measurerFor(doc: PdfDoc): Measure {
 
 type StructElem = ReturnType<PdfDoc['struct']>;
 
+/**
+ * Paints physical pages in order. A block split across pages has one fragment per page but
+ * one structure element: it is created with the first fragment, and every later fragment's
+ * marked content is added to it. Elements stay open until the end, when ending the root ends
+ * them all (PDFKit writes an element once it is ended).
+ */
 export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
   const root = doc.struct('Document');
   doc.addStructure(root);
+  const elements = new Map<object, StructElem>();
   for (const page of pages) {
     const { width, height, margin } = page.geometry;
-    doc.addPage({ size: [width, height], margin });
-    for (const block of page.blocks) paintBlock(doc, root, block);
+    doc.addPage({ size: [width, height], margins: margin });
+    for (const block of page.blocks) paintBlock(doc, root, block, elements);
   }
   root.end();
 }
 
-function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void {
+function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elements: Map<object, StructElem>): void {
   // Decoration first, while no structure content is open (artifact marking would close it).
   if (block.frame) paintFrame(doc, block.frame);
-  const elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
-  parent.add(elem);
+  let elem = elements.get(block.source);
+  if (!elem) {
+    elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
+    parent.add(elem);
+    elements.set(block.source, elem);
+  }
   if (block.kind === 'Sect') {
-    for (const child of block.children) paintBlock(doc, elem, child);
-  } else {
+    for (const child of block.children) paintBlock(doc, elem, child, elements);
+  } else if (block.lines.length > 0) {
     const content = doc.markStructureContent(block.kind);
     useFont(doc, block.style).fillColor(block.style.color);
     for (const line of block.lines) {
@@ -97,18 +108,28 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void 
     doc.endMarkedContent();
     elem.add(content);
   }
-  elem.end();
 }
 
 /** Background and border are decoration: Layout artifacts, absent from the structure tree. */
-function paintFrame(doc: PdfDoc, { x, y, width, height, box }: Frame): void {
+function paintFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom }: Frame): void {
   doc.markContent('Artifact', { type: 'Layout' });
   doc.save();
   if (box.backgroundColor) doc.rect(x, y, width, height).fill(box.backgroundColor);
   const b = box.borderWidth;
   if (b > 0) {
-    // Stroke centered on a rect inset by half the width keeps the border inside the border box.
-    doc.lineWidth(b).rect(x + b / 2, y + b / 2, width - b, height - b).stroke(box.borderColor);
+    // Strokes centered on lines inset by half the width keep the border inside the border box.
+    const [left, right, top, bottom] = [x + b / 2, x + width - b / 2, y + b / 2, y + height - b / 2];
+    doc.lineWidth(b);
+    if (!openTop && !openBottom) {
+      doc.rect(left, top, right - left, bottom - top);
+    } else {
+      // A slice of a block split across pages: no border on the edge where it continues.
+      const [y1, y2] = [openTop ? y : top, openBottom ? y + height : bottom];
+      doc.moveTo(left, y1).lineTo(left, y2).moveTo(right, y1).lineTo(right, y2);
+      if (!openTop) doc.moveTo(left, top).lineTo(right, top);
+      if (!openBottom) doc.moveTo(left, bottom).lineTo(right, bottom);
+    }
+    doc.stroke(box.borderColor);
   }
   doc.restore();
   doc.endMarkedContent();
