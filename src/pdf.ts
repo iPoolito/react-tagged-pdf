@@ -9,6 +9,16 @@ const DEFAULT_FONT_PATH = fileURLToPath(new URL('../fonts/NotoSans-Regular.ttf',
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
 
+const normalizeColor = (PDFDocument.prototype as unknown as { _normalizeColor(c: unknown): unknown })._normalizeColor;
+
+/** Whether PDFKit can paint `value` as a color: a 3- or 6-digit hex, or a CSS color name. */
+export function isPdfColor(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  // PDFKit parses any '#...' string without checking it, so validate hex here.
+  if (value.startsWith('#')) return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value);
+  return normalizeColor.call({ spotColors: {} }, value) != null;
+}
+
 const registeredFaces = new WeakMap<PdfDoc, Set<string>>();
 
 /** Select a resolved text style. Layout measures and paint draws with exactly this. */

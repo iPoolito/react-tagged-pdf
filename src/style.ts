@@ -1,6 +1,7 @@
 // The `style` prop. Text properties inherit down the tree like CSS; all lengths are points.
 import { DEFAULT_FONT_FAMILY, type FontFace, type FontStyle, type FontWeight, resolveFont, weightNumber } from './fonts.js';
 import type { TextKind } from './model.js';
+import { isPdfColor } from './pdf.js';
 
 export type Style = {
   /** Inherited. A family registered with `Font.register`, or the bundled `"Noto Sans"` (default). */
@@ -78,12 +79,58 @@ const ELEMENT_DEFAULTS: Partial<Record<TextKind, Style>> = {
   H6: { fontSize: 12, fontWeight: 'bold', marginBottom: 6 },
 };
 
+type Check = (value: unknown) => string | undefined;
+
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const length: Check = (v) => (isNumber(v) && v >= 0 ? undefined : 'must be a non-negative number of points');
+const color: Check = (v) =>
+  isPdfColor(v) ? undefined : "must be a CSS color name or hex color PDFKit accepts, e.g. 'navy' or '#1a1a1a'";
+
+/** Every supported `style` key and what makes its value valid. Unknown keys are errors. */
+const STYLE_CHECKS: Record<keyof Style, Check> = {
+  fontFamily: (v) => (typeof v === 'string' && v.trim() !== '' ? undefined : 'must be a non-empty font family name'),
+  fontSize: (v) => (isNumber(v) && v > 0 ? undefined : 'must be a number greater than 0 (points)'),
+  fontWeight: (v) =>
+    v === 'normal' || v === 'bold' || (isNumber(v) && v >= 100 && v <= 900 && v % 100 === 0)
+      ? undefined
+      : "must be 'normal', 'bold' or a multiple of 100 from 100 to 900",
+  fontStyle: (v) => (v === 'normal' || v === 'italic' ? undefined : "must be 'normal' or 'italic'"),
+  color,
+  lineHeight: length,
+  margin: length,
+  marginTop: length,
+  marginRight: length,
+  marginBottom: length,
+  marginLeft: length,
+  padding: length,
+  paddingTop: length,
+  paddingRight: length,
+  paddingBottom: length,
+  paddingLeft: length,
+  borderWidth: length,
+  borderColor: color,
+  backgroundColor: color,
+};
+
 /** Validate a raw `style` prop. `owner` names the component in error messages. */
 export function parseStyle(raw: unknown, owner: string): Style {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`<${owner}> \`style\` must be an object.`);
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === undefined) continue;
+    const check = Object.hasOwn(STYLE_CHECKS, key) ? STYLE_CHECKS[key as keyof Style] : undefined;
+    if (!check) {
+      throw new Error(
+        `<${owner}> \`style\` has unknown key ${JSON.stringify(key)}. Supported keys: ${Object.keys(STYLE_CHECKS).join(', ')}.`,
+      );
+    }
+    const problem = check(value);
+    if (problem) throw new Error(`<${owner}> \`style.${key}\` ${problem}; got ${describeValue(value)}.`);
+  }
   return raw as Style;
 }
+
+const describeValue = (v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v) ?? String(v));
 
 export function inheritText(parent: InheritedText, own: Style, kind?: TextKind): InheritedText {
   const merged = { ...(kind ? ELEMENT_DEFAULTS[kind] : undefined), ...own };
