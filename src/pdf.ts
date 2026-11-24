@@ -29,7 +29,8 @@ export function createPdfDocument(meta: { title: string; lang: string }): PdfDoc
   // PDFKit write a CIDSet meant for PDF/A-1 that is incomplete and fails veraPDF
   // PDF/UA-1 rule 7.21.4.2-2 for every embedded font. A truthy non-1 value keeps
   // the PDF/UA XMP identification but skips the CIDSet. Must run before any font
-  // is embedded. Covered by the veraPDF fixtures (`npm run test:ua`).
+  // is embedded. Regression: test/fixtures/cidset-regression.tsx under `npm run test:ua`
+  // (whether the bad CIDSet trips veraPDF depends on the subset's glyph set).
   (doc as unknown as { subset: unknown }).subset = '1';
   doc.registerFont(DEFAULT_FONT, DEFAULT_FONT_PATH);
   doc.font(DEFAULT_FONT).fontSize(DEFAULT_FONT_SIZE);
