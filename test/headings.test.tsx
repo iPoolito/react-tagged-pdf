@@ -37,6 +37,19 @@ describe('headings and sections', () => {
     );
   });
 
+  it('names the allowed block children when a Section contains something else', async () => {
+    const element = (
+      <Document title="Bad" lang="en-US">
+        <Page>
+          <Section>loose text</Section>
+        </Page>
+      </Document>
+    );
+    await expect(renderToBuffer(element)).rejects.toThrow(
+      '<Section> may only contain <P>, <H1>–<H6> and <Section> children, found text "loose text".',
+    );
+  });
+
   describe('heading levels', () => {
     const skipping = (
       <Document title="Skip" lang="en-US">

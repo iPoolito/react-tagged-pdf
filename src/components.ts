@@ -1,5 +1,10 @@
 import { createElement, type ReactNode } from 'react';
+import { HEADING_KINDS, type HeadingKind, type HeadingLevel } from './headings.js';
 import type { Style } from './style.js';
+
+const headingHostTypes = Object.fromEntries(HEADING_KINDS.map((kind) => [kind, `RTP_${kind}`])) as {
+  [K in HeadingKind]: `RTP_${K}`;
+};
 
 /** Intrinsic host element names, private to the renderer. */
 export const HostType = {
@@ -7,12 +12,7 @@ export const HostType = {
   Page: 'RTP_PAGE',
   Section: 'RTP_SECTION',
   P: 'RTP_P',
-  H1: 'RTP_H1',
-  H2: 'RTP_H2',
-  H3: 'RTP_H3',
-  H4: 'RTP_H4',
-  H5: 'RTP_H5',
-  H6: 'RTP_H6',
+  ...headingHostTypes,
 } as const;
 export type HostType = (typeof HostType)[keyof typeof HostType];
 
@@ -41,7 +41,7 @@ export type PageProps = CommonProps;
 export type SectionProps = BlockProps;
 export type PProps = BlockProps;
 
-export type HeadingProps = PProps;
+export type HeadingProps = BlockProps;
 
 /** Root of every PDF. Maps to the `Document` structure element. */
 export function Document(props: DocumentProps) {
@@ -63,27 +63,21 @@ export function P(props: PProps) {
   return createElement(HostType.P, props);
 }
 
+function heading(level: HeadingLevel) {
+  const type = HostType[`H${level}`];
+  const component = (props: HeadingProps) => createElement(type, props);
+  return Object.defineProperty(component, 'name', { value: `H${level}` });
+}
+
 /** Level 1 heading. Maps to the `H1` structure element. Do not skip levels. */
-export function H1(props: HeadingProps) {
-  return createElement(HostType.H1, props);
-}
+export const H1 = heading(1);
 /** Level 2 heading. Maps to the `H2` structure element. */
-export function H2(props: HeadingProps) {
-  return createElement(HostType.H2, props);
-}
+export const H2 = heading(2);
 /** Level 3 heading. Maps to the `H3` structure element. */
-export function H3(props: HeadingProps) {
-  return createElement(HostType.H3, props);
-}
+export const H3 = heading(3);
 /** Level 4 heading. Maps to the `H4` structure element. */
-export function H4(props: HeadingProps) {
-  return createElement(HostType.H4, props);
-}
+export const H4 = heading(4);
 /** Level 5 heading. Maps to the `H5` structure element. */
-export function H5(props: HeadingProps) {
-  return createElement(HostType.H5, props);
-}
+export const H5 = heading(5);
 /** Level 6 heading. Maps to the `H6` structure element. */
-export function H6(props: HeadingProps) {
-  return createElement(HostType.H6, props);
-}
+export const H6 = heading(6);

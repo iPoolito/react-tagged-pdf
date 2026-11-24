@@ -1,5 +1,6 @@
 // The `style` prop. Text properties inherit down the tree like CSS; all lengths are points.
 import { DEFAULT_FONT_FAMILY, type FontFace, type FontStyle, type FontWeight, resolveFont, weightNumber } from './fonts.js';
+import { HEADING_FONT_SIZE, HEADING_KINDS, type HeadingKind } from './headings.js';
 import type { TextKind } from './model.js';
 import { isPdfColor } from './pdf.js';
 
@@ -69,14 +70,12 @@ export const ROOT_TEXT: InheritedText = {
 };
 
 /** Built-in styles per element, applied under the author's `style` (like a browser's default stylesheet). */
-const ELEMENT_DEFAULTS: Partial<Record<TextKind, Style>> = {
-  P: { marginBottom: 6 },
-  H1: { fontSize: 24, fontWeight: 'bold', marginBottom: 6 },
-  H2: { fontSize: 20, fontWeight: 'bold', marginBottom: 6 },
-  H3: { fontSize: 16, fontWeight: 'bold', marginBottom: 6 },
-  H4: { fontSize: 14, fontWeight: 'bold', marginBottom: 6 },
-  H5: { fontSize: 12, fontWeight: 'bold', marginBottom: 6 },
-  H6: { fontSize: 12, fontWeight: 'bold', marginBottom: 6 },
+const TEXT_BLOCK_DEFAULTS: Style = { marginBottom: 6 };
+const ELEMENT_DEFAULTS: Record<TextKind, Style> = {
+  P: TEXT_BLOCK_DEFAULTS,
+  ...(Object.fromEntries(
+    HEADING_KINDS.map((kind) => [kind, { ...TEXT_BLOCK_DEFAULTS, fontSize: HEADING_FONT_SIZE[kind], fontWeight: 'bold' }]),
+  ) as Record<HeadingKind, Style>),
 };
 
 type Check = (value: unknown) => string | undefined;

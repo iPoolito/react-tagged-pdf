@@ -1,6 +1,7 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
 import { HostType } from './components.js';
+import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
   type BoxStyle,
@@ -14,7 +15,7 @@ import {
 } from './style.js';
 
 /** Structure tag of a text block; layout and paint carry it through to the PDF structure tree. */
-export type TextKind = 'P' | 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6';
+export type TextKind = 'P' | HeadingKind;
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | 'Sect';
 /** `lang` is the element's own `Lang` attribute; absent means inherited from the parent structure element. */
@@ -73,36 +74,30 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
 /** Headings must start at H1 and never skip a level going down (PDF/UA-1, veraPDF rule 7.4.2-1). */
 function checkHeadingLevels(pages: PageModel[]): string[] {
   const warnings: string[] = [];
-  let previous: TextBlock | undefined;
+  let previous: { block: TextBlock; level: number } | undefined;
   const label = (b: TextBlock) => `<${b.kind}> ${JSON.stringify(b.text.trim().slice(0, 40))}`;
   const visit = (block: Block) => {
     if (block.kind === 'Sect') return block.children.forEach(visit);
     if (block.kind === 'P') return;
-    const level = Number(block.kind.slice(1));
+    const level = headingLevel(block.kind);
     if (!previous && level > 1) {
       warnings.push(`Heading ${label(block)} is the first heading; PDF/UA expects the first heading to be an <H1>.`);
-    } else if (previous && level > Number(previous.kind.slice(1)) + 1) {
-      const skipped = Number(previous.kind.slice(1)) + 1;
+    } else if (previous && level > previous.level + 1) {
+      const skipped = previous.level + 1;
       warnings.push(
-        `Heading ${label(block)} follows ${label(previous)} and skips level ${skipped}; ` +
+        `Heading ${label(block)} follows ${label(previous.block)} and skips level ${skipped}; ` +
           'PDF/UA does not allow skipped heading levels (use consecutive levels).',
       );
     }
-    previous = block;
+    previous = { block, level };
   };
   pages.forEach((page) => page.blocks.forEach(visit));
   return warnings;
 }
 
-const textKinds: Partial<Record<string, TextKind>> = {
-  [HostType.P]: 'P',
-  [HostType.H1]: 'H1',
-  [HostType.H2]: 'H2',
-  [HostType.H3]: 'H3',
-  [HostType.H4]: 'H4',
-  [HostType.H5]: 'H5',
-  [HostType.H6]: 'H6',
-};
+const textKinds: Partial<Record<string, TextKind>> = Object.fromEntries(
+  (['P', ...HEADING_KINDS] as const).map((kind) => [HostType[kind], kind]),
+);
 
 function toBlock(node: HostNode, parent: string, inherited: InheritedText): Block {
   if (node.kind === 'element') {
@@ -119,7 +114,7 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText): Bloc
       return { kind: 'Sect', children, box: resolveBox(own), ...common };
     }
   }
-  throw new Error(`<${parent}> may only contain <P>, <H1>–<H6> and <Section> children, found ${describe(node)}.`);
+  throw new Error(`<${parent}> may only contain <P>, ${HEADING_RANGE} and <Section> children, found ${describe(node)}.`);
 }
 
 function optionalLang(el: HostElement): string | undefined {
