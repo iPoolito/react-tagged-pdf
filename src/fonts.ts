@@ -1,6 +1,7 @@
 // Font registry. Every font that reaches the PDF is a TrueType/OpenType file
 // embedded (subset) by PDFKit: PDF/UA-1 forbids unembedded fonts, so the
 // standard-14 fonts PDFKit would otherwise fall back to are rejected here.
+import { constants, accessSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export type FontWeight = 'normal' | 'bold' | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900;
@@ -36,11 +37,26 @@ function register({ family, src, weight, style = 'normal' }: FontSource): void {
   if (typeof src !== 'string' && !(src instanceof Uint8Array)) {
     throw new Error(`Font.register({ family: ${JSON.stringify(family)} }) requires \`src\`: a file path or the font bytes.`);
   }
+  if (typeof src === 'string') assertReadableFile(family, src);
   const key = family.trim().toLowerCase();
   const face: FontFace = { id: `rtp-font-${nextId++}`, family, weight: weightNumber(weight), style, src };
   // Registering the same family/weight/style again replaces the earlier face.
   const faces = (families.get(key) ?? []).filter((f) => f.weight !== face.weight || f.style !== face.style);
   families.set(key, [...faces, face]);
+}
+
+function assertReadableFile(family: string, path: string): void {
+  try {
+    accessSync(path, constants.R_OK);
+    if (!statSync(path).isFile()) throw new Error('not a file');
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `Font.register({ family: ${JSON.stringify(family)} }) cannot read \`src\` ${JSON.stringify(path)}: ${reason}. ` +
+        'Pass the path to a readable TTF/OTF file, or the font bytes.',
+      { cause },
+    );
+  }
 }
 
 /** Register a TrueType/OpenType font for use with `style.fontFamily`. Registered fonts are subset and embedded. */
@@ -66,7 +82,20 @@ export function resolveFont(family: string, weight: number, style: FontStyle): F
 }
 
 const bundled = (file: string) => fileURLToPath(new URL(`../fonts/${file}`, import.meta.url));
-register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-Regular.ttf') });
-register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-Bold.ttf'), weight: 'bold' });
-register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-Italic.ttf'), style: 'italic' });
-register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-BoldItalic.ttf'), weight: 'bold', style: 'italic' });
+/** Path of the bundled regular face, PDFKit's initial font (it must never fall back to a standard-14 font). */
+export const DEFAULT_FONT_PATH = bundled('NotoSans-Regular.ttf');
+
+function registerBundledFonts(): void {
+  register({ family: DEFAULT_FONT_FAMILY, src: DEFAULT_FONT_PATH });
+  register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-Bold.ttf'), weight: 'bold' });
+  register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-Italic.ttf'), style: 'italic' });
+  register({ family: DEFAULT_FONT_FAMILY, src: bundled('NotoSans-BoldItalic.ttf'), weight: 'bold', style: 'italic' });
+}
+
+/** Internal, not exported from the package: forget every registration except the bundled fonts. For tests. */
+export function resetFontRegistry(): void {
+  families.clear();
+  registerBundledFonts();
+}
+
+registerBundledFonts();

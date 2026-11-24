@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Document, Font, H1, P, Page, Section, renderToBuffer } from '../src/index.js';
+import { resetFontRegistry } from '../src/fonts.js';
 import { pdfFacts } from './support/read-pdf.js';
 
 const fontFile = (name: string) => fileURLToPath(new URL(`../fonts/${name}`, import.meta.url));
@@ -13,6 +14,8 @@ const embeddedFonts = async (pdf: Uint8Array) => {
 };
 
 describe('fonts', () => {
+  afterEach(() => resetFontRegistry());
+
   it('embeds a font registered with Font.register from a file path', async () => {
     Font.register({ family: 'Path Brand', src: fontFile('NotoSans-Italic.ttf') });
     const pdf = await renderToBuffer(
@@ -112,5 +115,32 @@ describe('fonts', () => {
     await expect(renderToBuffer(element)).rejects.toThrow(
       'Font family "Nope Sans" is not registered. Register it with Font.register({ family: "Nope Sans", src }).',
     );
+  });
+
+  it('throws at register time when the src file does not exist', () => {
+    const src = fontFile('does-not-exist.ttf');
+    expect(() => Font.register({ family: 'Missing', src })).toThrow(
+      `Font.register({ family: "Missing" }) cannot read \`src\` ${JSON.stringify(src)}`,
+    );
+  });
+
+  it('throws at register time when src is a directory', () => {
+    const src = fontFile('');
+    expect(() => Font.register({ family: 'Dir', src })).toThrow('Font.register({ family: "Dir" }) cannot read `src`');
+  });
+
+  it('forgets registrations after the registry is reset, but keeps the bundled default font', async () => {
+    Font.register({ family: 'Temporary', src: fontFile('NotoSans-Italic.ttf') });
+    resetFontRegistry();
+    const render = (family?: string) =>
+      renderToBuffer(
+        <Document title="Fonts" lang="en-US">
+          <Page>
+            <P style={family ? { fontFamily: family } : {}}>x</P>
+          </Page>
+        </Document>,
+      );
+    await expect(render('Temporary')).rejects.toThrow('Font family "Temporary" is not registered.');
+    expect(await embeddedFonts(await render())).toEqual(['NotoSans-Regular']);
   });
 });
