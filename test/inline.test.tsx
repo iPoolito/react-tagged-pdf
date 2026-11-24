@@ -218,6 +218,19 @@ describe('Link', () => {
     expect((await linkAnnotations(pdf)).map((a) => a.contents)).toEqual(['Privacy policy (opens example.com)']);
   });
 
+  it('writes non-ASCII link text and descriptions to /Contents exactly', async () => {
+    const pdf = await render(
+      <P lang="es-ES">
+        Lea los <Link href={POLICY}>Términos y condiciones</Link> y la{' '}
+        <Link href={POLICY} description="Política de privacidad – “España” 🔒">política</Link>.
+      </P>,
+    );
+    expect((await linkAnnotations(pdf)).map((a) => a.contents)).toEqual([
+      'Términos y condiciones',
+      'Política de privacidad – “España” 🔒',
+    ]);
+  });
+
   it('works inside headings and spans, taking the surrounding style', async () => {
     const pdf = await render(
       <H1>

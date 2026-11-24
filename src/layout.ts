@@ -1,7 +1,17 @@
 // Layout pass: block flow onto physical pages, greedy line wrapping at UAX #14
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
-import type { Block, DocumentModel, PageGeometry, SectionBlock, TextBlock, TextKind, TextRun } from './model.js';
+import {
+  type Block,
+  type DocumentModel,
+  mergeAdjacent,
+  type PageGeometry,
+  type SectionBlock,
+  type TextBlock,
+  type TextKind,
+  type TextRun,
+  textOf,
+} from './model.js';
 import type { BoxStyle, TextStyle } from './style.js';
 
 /** Measures text set in one resolved text style. */
@@ -240,8 +250,8 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       return { above: m.ascent + halfLeading, below: m.lineHeight - m.ascent + halfLeading };
     };
     const runs = block.runs;
-    for (const pieces of wrap(runs, box.innerWidth, (run, text) => measure(runs[run]!.style).widthOf(text))) {
-      const extents = (pieces.length > 0 ? pieces.map((p) => runs[p.run]!.style) : [block.style]).map(extent);
+    for (const pieces of wrap(runs, box.innerWidth, (runIndex, text) => measure(runs[runIndex]!.style).widthOf(text))) {
+      const extents = (pieces.length > 0 ? pieces.map((p) => runs[p.runIndex]!.style) : [block.style]).map(extent);
       const above = Math.max(...extents.map((e) => e.above));
       const lineBox = above + Math.max(...extents.map((e) => e.below));
       if (y + lineBox > bottom + EPSILON) {
@@ -257,9 +267,9 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       const baseline = y + above;
       let x = box.innerX;
       const fragments = pieces.map((p): Fragment => {
-        const run = runs[p.run]!;
-        const m = measure(run.style);
-        const fragment = { text: p.text, x, y: baseline - m.ascent, width: m.widthOf(p.text), run };
+        const run = runs[p.runIndex]!;
+        const metrics = measure(run.style);
+        const fragment = { text: p.text, x, y: baseline - metrics.ascent, width: metrics.widthOf(p.text), run };
         x += fragment.width;
         return fragment;
       });
@@ -287,19 +297,12 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
   for (const block of blocks) place(block, margin.left, geometry.width - margin.left - margin.right);
 }
 
-/** Part of a line taken from one run: `run` indexes the block's runs. */
-export type Piece = { run: number; text: string };
+/** Part of a line taken from one run: `runIndex` indexes the block's runs. */
+export type Piece = { runIndex: number; text: string };
 
 /** `line` followed by `more`, merging neighbouring pieces of the same run. */
-function joinPieces(line: Piece[], more: Piece[]): Piece[] {
-  const out = line.map((p) => ({ ...p }));
-  for (const p of more) {
-    const last = out.at(-1);
-    if (last && last.run === p.run) last.text += p.text;
-    else if (p.text) out.push({ ...p });
-  }
-  return out;
-}
+const joinPieces = (line: Piece[], more: Piece[]): Piece[] =>
+  mergeAdjacent(line, more, (a, b) => a.runIndex === b.runIndex);
 
 /** `pieces` without the characters `pattern` (anchored at the end) matches, across piece boundaries. */
 function stripEnd(pieces: Piece[], pattern: RegExp): Piece[] {
@@ -319,23 +322,24 @@ const TRAILING_NEWLINE = /[\r\n\x0B\x0C\x85\u2028\u2029]+$/;
 /**
  * Greedy wrap of a block's runs. Break opportunities come from UAX #14 over the whole text,
  * so a run boundary inside a word is never a break. Trailing whitespace never counts toward
- * the fit and is not kept at line ends. `widthOf(run, text)` measures text in that run's style.
+ * the fit and is not kept at line ends. `widthOf(runIndex, text)` measures text in that run's style.
  */
 export function wrap(
   runs: readonly { text: string }[],
   maxWidth: number,
-  widthOf: (run: number, text: string) => number,
+  widthOf: (runIndex: number, text: string) => number,
 ): Piece[][] {
-  const text = runs.map((r) => r.text).join('');
+  const text = textOf(runs);
   const starts: number[] = [];
   runs.reduce((offset, r) => (starts.push(offset), offset + r.text.length), 0);
   /** The text between `from` and `to`, split at run boundaries. */
   const slice = (from: number, to: number): Piece[] =>
-    runs.flatMap((r, run) => {
-      const [a, b] = [Math.max(from, starts[run]!), Math.min(to, starts[run]! + r.text.length)];
-      return b > a ? [{ run, text: text.slice(a, b) }] : [];
+    runs.flatMap((run, runIndex) => {
+      const start = Math.max(from, starts[runIndex]!);
+      const end = Math.min(to, starts[runIndex]! + run.text.length);
+      return end > start ? [{ runIndex, text: text.slice(start, end) }] : [];
     });
-  const width = (pieces: Piece[]) => pieces.reduce((sum, p) => sum + widthOf(p.run, p.text), 0);
+  const width = (pieces: Piece[]) => pieces.reduce((sum, p) => sum + widthOf(p.runIndex, p.text), 0);
   const fitWidth = (pieces: Piece[]) => width(stripEnd(pieces, TRAILING_SPACE));
 
   const lines: Piece[][] = [];
@@ -355,7 +359,7 @@ export function wrap(
     if (line.length > 0 && fitWidth(joinPieces(line, word)) > maxWidth) push();
     // A single word wider than the line: break it between characters.
     while (line.length === 0 && fitWidth(word) > maxWidth) {
-      const chars = word.flatMap((p) => Array.from(p.text, (c) => ({ run: p.run, text: c })));
+      const chars = word.flatMap((p) => Array.from(p.text, (char) => ({ runIndex: p.runIndex, text: char })));
       let n = 1;
       while (n < chars.length && width(joinPieces([], chars.slice(0, n + 1))) <= maxWidth) n++;
       line = joinPieces([], chars.slice(0, n));

@@ -13,6 +13,7 @@ import {
   resolveBox,
   resolveText,
   type Sides,
+  sameStyle,
   type TextStyle,
 } from './style.js';
 
@@ -135,7 +136,7 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText): Bloc
     if (textKind) {
       const text = inheritText(inherited, own, textKind);
       const runs = mergeRuns(collectRuns(node, text));
-      const block = { kind: textKind, text: runs.map((r) => r.text).join(''), runs };
+      const block = { kind: textKind, text: textOf(runs), runs };
       return { ...block, style: resolveText(text), box: resolveBox(own, textKind), ...common };
     }
     if (node.type === HostType.Section) {
@@ -227,19 +228,30 @@ function optionalLang(el: HostElement): string | undefined {
 const toBlocks = (el: HostElement, inherited: InheritedText): Block[] =>
   el.children.filter((c) => !isBlank(c)).map((c) => toBlock(c, nameOf(el), inherited));
 
-const sameStyle = (a: TextStyle, b: TextStyle) =>
-  a.font === b.font && a.fontSize === b.fontSize && a.color === b.color && a.lineHeight === b.lineHeight;
+/** All of the items' text, in order. */
+export const textOf = (items: readonly { text: string }[]) => items.map((i) => i.text).join('');
 
-/** Neighbouring runs that look the same become one run. */
-function mergeRuns(runs: TextRun[]): TextRun[] {
-  const out: TextRun[] = [];
-  for (const run of runs) {
+/**
+ * `items` appended to `head`, each one's text joined onto the previous item when `same` says
+ * they belong together. Items with no text are dropped. Neither input is mutated.
+ */
+export function mergeAdjacent<T extends { text: string }>(
+  head: readonly T[],
+  items: readonly T[],
+  same: (a: T, b: T) => boolean,
+): T[] {
+  const out = head.map((item) => ({ ...item }));
+  for (const item of items) {
     const last = out.at(-1);
-    if (last && last.link === run.link && sameStyle(last.style, run.style)) last.text += run.text;
-    else if (run.text) out.push({ ...run });
+    if (last && same(last, item)) last.text += item.text;
+    else if (item.text) out.push({ ...item });
   }
   return out;
 }
+
+/** Neighbouring runs that look the same become one run. */
+const mergeRuns = (runs: TextRun[]): TextRun[] =>
+  mergeAdjacent([], runs, (a, b) => a.link === b.link && sameStyle(a.style, b.style));
 
 /** The text of a block in document order, split into runs wherever the style or link changes. */
 function collectRuns(el: HostElement, inherited: InheritedText, link?: LinkTarget): TextRun[] {
@@ -273,7 +285,7 @@ function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
   }
   const target: LinkTarget = { href, contents: '' };
   const runs = collectRuns(el, inheritText(inherited, parseInlineStyle(el.props.style, 'Link')), target);
-  const visible = runs.map((r) => r.text).join('').replace(/\s+/g, ' ').trim();
+  const visible = textOf(runs).replace(/\s+/g, ' ').trim();
   if (!visible) {
     throw new Error(`<Link> href ${JSON.stringify(href)} has no visible text; put the link text inside <Link>.`);
   }

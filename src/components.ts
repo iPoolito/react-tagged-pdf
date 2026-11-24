@@ -1,6 +1,8 @@
 import { createElement, type ReactNode } from 'react';
 import { HEADING_KINDS, type HeadingKind, type HeadingLevel } from './headings.js';
-import type { Style } from './style.js';
+import type { InlineStyle, Style } from './style.js';
+
+export type { InlineStyle };
 
 const headingHostTypes = Object.fromEntries(HEADING_KINDS.map((kind) => [kind, `RTP_${kind}`])) as {
   [K in HeadingKind]: `RTP_${K}`;
@@ -60,11 +62,6 @@ export type PProps = BlockProps;
 
 export type HeadingProps = BlockProps;
 
-/**
- * Text properties an inline element may set. Box properties (margin, padding, border,
- * background) and lineHeight are block-only.
- */
-export type InlineStyle = Pick<Style, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'color'>;
 export type SpanProps = {
   /** Overrides the inherited text style for this run of text, like CSS. */
   style?: InlineStyle;

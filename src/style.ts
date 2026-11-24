@@ -48,8 +48,12 @@ export type BoxStyle = {
   backgroundColor?: string;
 };
 
-/** Fully resolved text style of one block. */
+/** Fully resolved text style of a block or of one run of its text. */
 export type TextStyle = { font: FontFace; fontSize: number; color: string; lineHeight?: number };
+
+/** Whether two resolved text styles look the same. Compares every `TextStyle` field. */
+export const sameStyle = (a: TextStyle, b: TextStyle) =>
+  a.font === b.font && a.fontSize === b.fontSize && a.color === b.color && a.lineHeight === b.lineHeight;
 
 /** Inherited text properties before font resolution. */
 export type InheritedText = {
@@ -131,8 +135,14 @@ export function parseStyle(raw: unknown, owner: string): Style {
 
 const INLINE_KEYS = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'color'] as const;
 
+/**
+ * Text properties an inline element may set. Box properties (margin, padding, border,
+ * background) and lineHeight are block-only.
+ */
+export type InlineStyle = Pick<Style, (typeof INLINE_KEYS)[number]>;
+
 /** Validate the `style` of an inline element: only text properties, which apply to its run of text. */
-export function parseInlineStyle(raw: unknown, owner: string): Style {
+export function parseInlineStyle(raw: unknown, owner: string): InlineStyle {
   const style = parseStyle(raw, owner);
   for (const key of Object.keys(style)) {
     if (style[key as keyof Style] !== undefined && !(INLINE_KEYS as readonly string[]).includes(key)) {

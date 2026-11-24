@@ -145,20 +145,31 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
       doc.text(text, x, y, { lineBreak: false });
     }
     for (const { link, x, width } of linkSpans(line)) {
-      doc.link(x, line.top, width, line.height, link.href, {
+      // @types/pdfkit lacks structParent; passing a variable (not a literal) skips the excess-property check.
+      const options = {
         structParent: linkElem(link),
-        // A String object is written as a PDF text string. PDFKit's default is empty, which
-        // veraPDF rejects, so it is always the link text or the author's description.
-        Contents: new String(link.contents),
-      } as never);
+        // PDFKit's default is empty, which veraPDF rejects, so it is always the link text or the author's description.
+        Contents: pdfTextString(link.contents),
+      };
+      doc.link(x, line.top, width, line.height, link.href, options);
     }
   }
   close();
 }
 
+/**
+ * A PDF text string for an annotation entry. PDFKit, like its own `note()`/`link()`, writes a
+ * String object as a text string (UTF-16BE when it is not plain ASCII); a primitive string
+ * would be written as a PDF name. The typings only accept `string`.
+ */
+const pdfTextString = (text: string): string => new String(text) as unknown as string;
+
+/** One link's horizontal extent on one line: where its annotation goes. */
+type LinkSpan = { link: LinkTarget; x: number; width: number };
+
 /** Each link's horizontal extent on one line. */
-function linkSpans(line: Line): { link: LinkTarget; x: number; width: number }[] {
-  const spans: { link: LinkTarget; x: number; width: number }[] = [];
+function linkSpans(line: Line): LinkSpan[] {
+  const spans: LinkSpan[] = [];
   for (const { run, x, width } of line.fragments) {
     const last = spans.at(-1);
     if (!run.link) continue;

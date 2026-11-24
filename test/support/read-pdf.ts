@@ -50,6 +50,12 @@ async function markedContentText(bytes: Uint8Array): Promise<Map<string, string>
   });
 }
 
+/** A structure element's `/K` entries, unresolved: `/K` may be one kid or an array of them. */
+function kidsOf(node: PDFDict): PDFObject[] {
+  const K = node.get(PDFName.of('K'));
+  return K instanceof PDFArray ? K.asArray() : K ? [K] : [];
+}
+
 /**
  * Readable outline of the structure tree, one element per line, indented by depth:
  *   Document
@@ -68,8 +74,7 @@ export async function structOutline(bytes: Uint8Array): Promise<string> {
 
   const walk = (node: PDFDict, depth: number, inheritedPg: PDFRef | undefined) => {
     const pg = (node.get(PDFName.of('Pg')) as PDFRef | undefined) ?? inheritedPg;
-    const K = node.get(PDFName.of('K'));
-    const kids: PDFObject[] = K instanceof PDFArray ? K.asArray() : K ? [K] : [];
+    const kids = kidsOf(node);
     // Own text in kid order; a child element inside mixed content shows as [Tag] where it sits.
     const parts: string[] = [];
     let hasContent = false;
@@ -226,9 +231,7 @@ export async function linkAnnotations(bytes: Uint8Array): Promise<LinkAnnotation
 
   const owners = new Map<number, { ref: number; type: string }>();
   const walk = (ref: PDFRef | undefined, node: PDFDict) => {
-    const K = node.get(PDFName.of('K'));
-    const kids: PDFObject[] = K instanceof PDFArray ? K.asArray() : K ? [K] : [];
-    for (const raw of kids) {
+    for (const raw of kidsOf(node)) {
       const k = ctx.lookup(raw);
       if (!(k instanceof PDFDict)) continue;
       if (k.get(PDFName.of('Type'))?.toString() === '/OBJR' && ref) {
