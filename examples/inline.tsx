@@ -47,7 +47,8 @@ await renderToFile(
         <Link href="https://example.com/terminos" description="Términos del servicio (example.com)" style={enlace}>
           términos
         </Link>{' '}
-        o escríbanos a <Link href="mailto:equipo@example.com" style={enlace}>equipo@example.com</Link>.
+        o escríbanos a <Link href="mailto:equipo@example.com" style={enlace}>equipo@example.com</Link>. También
+        puede llamarnos al <Link href="tel:+34600000000" style={enlace}>600 000 000</Link>.
       </P>
 
       <H2 style={{ marginTop: 24 }}>Un párrafo que cambia de página</H2>

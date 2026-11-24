@@ -108,7 +108,11 @@ export function Span(props: SpanProps) {
 }
 
 export type LinkProps = {
-  /** An external URL with a scheme, e.g. `https://example.com` or `mailto:team@example.com`. */
+  /**
+   * An external URL whose scheme is `http:`, `https:`, `mailto:` or `tel:` (any case), e.g.
+   * `https://example.com`, `mailto:team@example.com` or `tel:+34600000000`. Any other scheme
+   * (`javascript:`, `file:`, `data:`, `ftp:`, …) throws; internal links and anchors are not supported yet.
+   */
   href: string;
   /**
    * What assistive technology announces for the link (the annotation's `/Contents`).

@@ -267,6 +267,8 @@ function collectRuns(el: HostElement, inherited: InheritedText, link?: LinkTarge
 }
 
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+/** The only URL schemes a <Link> may point to; anything else (javascript:, file:, data:, …) is refused. */
+const ALLOWED_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:'];
 
 function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
   const href = requireString(el, 'href', 'an external URL such as "https://example.com".');
@@ -274,6 +276,13 @@ function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
     throw new Error(
       `<Link> href ${JSON.stringify(href)} is not supported yet: only external URLs with a scheme ` +
         '(e.g. "https://example.com") are; internal links and anchors are not.',
+    );
+  }
+  const scheme = new URL(href).protocol;
+  if (!ALLOWED_SCHEMES.includes(scheme)) {
+    throw new Error(
+      `<Link> href ${JSON.stringify(href)} uses the scheme ${JSON.stringify(scheme)}, which is not allowed; ` +
+        `use one of ${ALLOWED_SCHEMES.join(', ')}.`,
     );
   }
   const { description } = el.props;

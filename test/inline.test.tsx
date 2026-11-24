@@ -315,9 +315,35 @@ describe('Link errors', () => {
     );
   });
 
-  it('accepts mailto: and other URL schemes', async () => {
-    const pdf = await render(<P><Link href="mailto:team@example.com">write to us</Link></P>);
-    expect((await linkAnnotations(pdf)).map((a) => a.uri)).toEqual(['mailto:team@example.com']);
+  it('rejects the javascript: scheme, naming the allowed schemes', async () => {
+    await expect(render(<P><Link href="javascript:alert(1)">x</Link></P>)).rejects.toThrow(
+      '<Link> href "javascript:alert(1)" uses the scheme "javascript:", which is not allowed; ' +
+        'use one of http:, https:, mailto:, tel:.',
+    );
+  });
+
+  it.each([
+    ['JavaScript:alert(1)', 'javascript:'],
+    ['file:///etc/passwd', 'file:'],
+    ['data:text/html,<b>hi</b>', 'data:'],
+    ['ftp://example.com/file.txt', 'ftp:'],
+    ['acme:open', 'acme:'],
+  ])('rejects the disallowed href %j', async (href, scheme) => {
+    await expect(render(<P><Link href={href}>x</Link></P>)).rejects.toThrow(
+      `uses the scheme "${scheme}", which is not allowed; use one of http:, https:, mailto:, tel:.`,
+    );
+  });
+
+  it.each([
+    'http://example.com',
+    'https://example.com/a?b=c',
+    'mailto:team@example.com',
+    'tel:+34-600-000-000',
+    'HTTPS://EXAMPLE.COM',
+    'Mailto:team@example.com',
+  ])('accepts the href %j as written', async (href) => {
+    const pdf = await render(<P><Link href={href}>x</Link></P>);
+    expect((await linkAnnotations(pdf)).map((a) => a.uri)).toEqual([href]);
   });
 
   it('needs visible text', async () => {
