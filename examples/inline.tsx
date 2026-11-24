@@ -6,8 +6,12 @@
 // - a <Link> long enough to wrap onto a second line: it is clickable on both lines (two
 //   annotation rectangles) and in Acrobat's Tags panel it is a single <Link> holding its text
 //   and both annotations (OBJR); a <Span> adds no tag of its own;
+// - links are underlined by default, so they never rely on color alone; the underline follows
+//   the link onto its next line and stops at the last glyph, never under a line-end space;
 // - a link whose `description` replaces the link text as the annotation's /Contents, which is
 //   what assistive technology announces (hover it in Acrobat to see the tooltip);
+// - an English phrase inside a Spanish paragraph: <Span lang="en-US"> becomes a <Span> tag with
+//   Lang en-US in the Tags panel, so a screen reader switches pronunciation for those words;
 // - a paragraph with styled runs and a link that splits across the page break, still one <P>.
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -49,6 +53,11 @@ await renderToFile(
         </Link>{' '}
         o escríbanos a <Link href="mailto:equipo@example.com" style={enlace}>equipo@example.com</Link>. También
         puede llamarnos al <Link href="tel:+34600000000" style={enlace}>600 000 000</Link>.
+      </P>
+      <P>
+        Todos los enlaces van subrayados para que no dependan solo del color. En la guía{' '}
+        <Span lang="en-US" style={cursiva}>Getting Started</Span> (en inglés) se explica cómo empezar; el
+        lector de pantalla pronuncia esas palabras en inglés.
       </P>
 
       <H2 style={{ marginTop: 24 }}>Un párrafo que cambia de página</H2>
