@@ -2,8 +2,7 @@
 // level is configured in createPdfDocument(); keep the workarounds there.
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
-import type { LaidOutPage, Measurer } from './layout.js';
-import type { BlockKind } from './model.js';
+import type { LaidOutBlock, LaidOutPage, Measurer } from './layout.js';
 
 const DEFAULT_FONT = 'NotoSans';
 const DEFAULT_FONT_PATH = fileURLToPath(new URL('../fonts/NotoSans-Regular.ttf', import.meta.url));
@@ -49,27 +48,34 @@ export function measurerFor(doc: PdfDoc): Measurer {
   };
 }
 
+type StructElem = ReturnType<PdfDoc['struct']>;
+
 export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
   const root = doc.struct('Document');
   doc.addStructure(root);
   for (const page of pages) {
     const { width, height, margin } = page.geometry;
     doc.addPage({ size: [width, height], margin });
-    for (const block of page.blocks) {
-      const tag: BlockKind = block.kind;
-      const elem = doc.struct(tag);
-      root.add(elem);
-      const content = doc.markStructureContent(tag);
-      useDefaultFont(doc);
-      for (const line of block.lines) {
-        if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });
-      }
-      doc.endMarkedContent();
-      elem.add(content);
-      elem.end();
-    }
+    for (const block of page.blocks) paintBlock(doc, root, block);
   }
   root.end();
+}
+
+function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void {
+  const elem = doc.struct(block.kind);
+  parent.add(elem);
+  if (block.kind === 'Sect') {
+    for (const child of block.children) paintBlock(doc, elem, child);
+  } else {
+    const content = doc.markStructureContent(block.kind);
+    useDefaultFont(doc);
+    for (const line of block.lines) {
+      if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });
+    }
+    doc.endMarkedContent();
+    elem.add(content);
+  }
+  elem.end();
 }
 
 export function toBuffer(doc: PdfDoc): Promise<Buffer> {

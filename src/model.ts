@@ -3,10 +3,13 @@
 import { HostType } from './components.js';
 import type { HostElement, HostNode } from './reconciler.js';
 
-/** Structure tag of a block-level element; layout and paint carry it through to the PDF structure tree. */
-export type BlockKind = 'P';
-export type ParagraphBlock = { kind: BlockKind; text: string };
-export type Block = ParagraphBlock;
+/** Structure tag of a text block; layout and paint carry it through to the PDF structure tree. */
+export type TextKind = 'P' | 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6';
+/** Structure tag of any block-level element. */
+export type BlockKind = TextKind | 'Sect';
+export type TextBlock = { kind: TextKind; text: string };
+export type SectionBlock = { kind: 'Sect'; children: Block[] };
+export type Block = TextBlock | SectionBlock;
 export type PageModel = { blocks: Block[] };
 export type DocumentModel = { title: string; lang: string; pages: PageModel[] };
 
@@ -41,24 +44,39 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     if (child.kind !== 'element' || child.type !== HostType.Page) {
       throw new Error(`<Document> may only contain <Page> children, found ${describe(child)}.`);
     }
-    pages.push({ blocks: child.children.filter((c) => !isBlank(c)).map(toBlock) });
+    pages.push({ blocks: toBlocks(child) });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
   return { title, lang, pages };
 }
 
-function toBlock(node: HostNode): Block {
-  if (node.kind === 'element' && node.type === HostType.P) {
-    return { kind: 'P', text: collectText(node) };
+const textKinds: Partial<Record<string, TextKind>> = {
+  [HostType.P]: 'P',
+  [HostType.H1]: 'H1',
+  [HostType.H2]: 'H2',
+  [HostType.H3]: 'H3',
+  [HostType.H4]: 'H4',
+  [HostType.H5]: 'H5',
+  [HostType.H6]: 'H6',
+};
+
+function toBlock(node: HostNode, parent: string): Block {
+  if (node.kind === 'element') {
+    const textKind = textKinds[node.type];
+    if (textKind) return { kind: textKind, text: collectText(node) };
+    if (node.type === HostType.Section) return { kind: 'Sect', children: toBlocks(node) };
   }
-  throw new Error(`<Page> may only contain <P> children, found ${describe(node)}.`);
+  throw new Error(`<${parent}> may only contain <P>, <H1>–<H6> and <Section> children, found ${describe(node)}.`);
 }
 
-function collectText(p: HostElement): string {
-  return p.children
+const toBlocks = (el: HostElement): Block[] =>
+  el.children.filter((c) => !isBlank(c)).map((c) => toBlock(c, nameOf(el)));
+
+function collectText(el: HostElement): string {
+  return el.children
     .map((c) => {
       if (c.kind === 'text') return c.text;
-      throw new Error(`<P> may only contain text, found ${describe(c)}.`);
+      throw new Error(`<${nameOf(el)}> may only contain text, found ${describe(c)}.`);
     })
     .join('');
 }
