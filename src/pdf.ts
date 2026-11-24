@@ -10,6 +10,9 @@ const DEFAULT_FONT_SIZE = 12;
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
 
+/** Select the bundled font at the body size. Layout measures and paint draws with exactly this. */
+const useDefaultFont = (doc: PdfDoc) => doc.font(DEFAULT_FONT).fontSize(DEFAULT_FONT_SIZE);
+
 export function createPdfDocument(meta: { title: string; lang: string }): PdfDoc {
   const doc = new PDFDocument({
     // Default 1.3 writes no XMP metadata stream (veraPDF 7.1-8).
@@ -33,12 +36,12 @@ export function createPdfDocument(meta: { title: string; lang: string }): PdfDoc
   // (whether the bad CIDSet trips veraPDF depends on the subset's glyph set).
   (doc as unknown as { subset: unknown }).subset = '1';
   doc.registerFont(DEFAULT_FONT, DEFAULT_FONT_PATH);
-  doc.font(DEFAULT_FONT).fontSize(DEFAULT_FONT_SIZE);
+  useDefaultFont(doc);
   return doc;
 }
 
 export function measurerFor(doc: PdfDoc): Measurer {
-  doc.font(DEFAULT_FONT).fontSize(DEFAULT_FONT_SIZE);
+  useDefaultFont(doc);
   return {
     widthOf: (text) => doc.widthOfString(text),
     lineHeight: doc.currentLineHeight(true),
@@ -55,7 +58,7 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
       const elem = doc.struct(block.kind);
       root.add(elem);
       const content = doc.markStructureContent(block.kind);
-      doc.font(DEFAULT_FONT).fontSize(DEFAULT_FONT_SIZE);
+      useDefaultFont(doc);
       for (const line of block.lines) {
         if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });
       }
