@@ -11,19 +11,31 @@ export type Style = {
   fontWeight?: FontWeight;
   /** Inherited. */
   fontStyle?: FontStyle;
+  /** Inherited. Any color PDFKit accepts: a CSS name (`'navy'`) or hex (`'#1a1a1a'`). Default black. */
+  color?: string;
+  /** Inherited. Height of each line box in points (not a multiplier). Default: the font's natural line height. */
+  lineHeight?: number;
 };
 
 /** Fully resolved text style of one block. */
-export type TextStyle = { font: FontFace; fontSize: number };
+export type TextStyle = { font: FontFace; fontSize: number; color: string; lineHeight?: number };
 
 /** Inherited text properties before font resolution. */
-export type InheritedText = { fontFamily: string; fontSize: number; fontWeight: number; fontStyle: FontStyle };
+export type InheritedText = {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  fontStyle: FontStyle;
+  color: string;
+  lineHeight?: number;
+};
 
 export const ROOT_TEXT: InheritedText = {
   fontFamily: DEFAULT_FONT_FAMILY,
   fontSize: 12,
   fontWeight: 400,
   fontStyle: 'normal',
+  color: 'black',
 };
 
 /** Built-in styles per element, applied under the author's `style` (like a browser's default stylesheet). */
@@ -50,10 +62,14 @@ export function inheritText(parent: InheritedText, own: Style, kind?: TextKind):
     fontSize: merged.fontSize ?? parent.fontSize,
     fontWeight: merged.fontWeight === undefined ? parent.fontWeight : weightNumber(merged.fontWeight),
     fontStyle: merged.fontStyle ?? parent.fontStyle,
+    color: merged.color ?? parent.color,
+    lineHeight: merged.lineHeight ?? parent.lineHeight,
   };
 }
 
 export const resolveText = (t: InheritedText): TextStyle => ({
   font: resolveFont(t.fontFamily, t.fontWeight, t.fontStyle),
   fontSize: t.fontSize,
+  color: t.color,
+  ...(t.lineHeight === undefined ? {} : { lineHeight: t.lineHeight }),
 });

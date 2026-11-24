@@ -7,7 +7,7 @@ import type { TextStyle } from './style.js';
 /** Measures text set in one resolved text style. */
 export type Measurer = {
   widthOf(text: string): number;
-  /** Height of one line box in points. */
+  /** Natural height of one line (ascender to descender plus line gap) in points. */
   lineHeight: number;
 };
 
@@ -16,6 +16,7 @@ export type Measure = (style: TextStyle) => Measurer;
 
 export type PageGeometry = { width: number; height: number; margin: number };
 
+/** `y` is the top of the glyph box, as PDFKit's `text(str, x, y)` expects. */
 export type Line = { text: string; x: number; y: number };
 export type LaidOutText = { kind: TextKind; lang?: string; style: TextStyle; lines: Line[] };
 export type LaidOutSection = { kind: 'Sect'; lang?: string; children: LaidOutBlock[] };
@@ -36,9 +37,12 @@ export function layoutDocument(model: DocumentModel, measureFor: Measure): LaidO
     const place = (block: Block): LaidOutBlock => {
       if (block.kind === 'Sect') return { kind: 'Sect', lang: block.lang, children: block.children.map(place) };
       const measure = measureFor(block.style);
+      const lineBox = block.style.lineHeight ?? measure.lineHeight;
+      // Center the glyph box in the line box (half-leading); Line.y is the top of the glyph box.
+      const halfLeading = (lineBox - measure.lineHeight) / 2;
       const lines = wrap(block.text, maxWidth, measure).map((text) => {
-        const line = { text, x: geometry.margin, y };
-        y += measure.lineHeight;
+        const line = { text, x: geometry.margin, y: y + halfLeading };
+        y += lineBox;
         return line;
       });
       y += PARAGRAPH_GAP;

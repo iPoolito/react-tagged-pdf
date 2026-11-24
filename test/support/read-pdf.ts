@@ -141,19 +141,37 @@ export async function pdfFacts(bytes: Uint8Array): Promise<PdfFacts> {
   };
 }
 
-/** Every text run drawn on each page, with its left x, width and baseline y (PDF user space). */
+/** Every text run drawn on each page, with its left x, width, baseline y (PDF user space) and font size. */
 export async function textRuns(bytes: Uint8Array) {
   return withPdfjs(bytes, async (pdf) => {
-    const pages: { width: number; height: number; runs: { str: string; x: number; y: number; width: number }[] }[] = [];
+    type Run = { str: string; x: number; y: number; width: number; size: number };
+    const pages: { width: number; height: number; runs: Run[] }[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const [, , width, height] = page.view as number[];
       const tc = await page.getTextContent();
       const runs = (tc.items as TextItem[])
         .filter((it) => typeof it.str === 'string' && it.str.length > 0)
-        .map((it) => ({ str: it.str, x: it.transform[4]!, y: it.transform[5]!, width: it.width }));
+        .map((it) => ({
+          str: it.str,
+          x: it.transform[4]!,
+          y: it.transform[5]!,
+          width: it.width,
+          size: Math.hypot(it.transform[2]!, it.transform[3]!),
+        }));
       pages.push({ width: width!, height: height!, runs });
     }
     return pages;
   });
+}
+
+/** Decoded content stream(s) of a page (1-based), for checking drawing operators such as colors and rectangles. */
+export async function pageContent(bytes: Uint8Array, pageNumber = 1): Promise<string> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const page = doc.getPage(pageNumber - 1).node;
+  const contents = page.lookup(PDFName.of('Contents'));
+  const streams = contents instanceof PDFArray ? contents.asArray().map((r) => doc.context.lookup(r)) : [contents];
+  return streams
+    .map((s) => new TextDecoder('latin1').decode(decodePDFRawStream(s as PDFRawStream).decode()))
+    .join('\n');
 }

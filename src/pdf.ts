@@ -80,7 +80,7 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void 
     for (const child of block.children) paintBlock(doc, elem, child);
   } else {
     const content = doc.markStructureContent(block.kind);
-    useFont(doc, block.style);
+    useFont(doc, block.style).fillColor(block.style.color);
     for (const line of block.lines) {
       if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });
     }
