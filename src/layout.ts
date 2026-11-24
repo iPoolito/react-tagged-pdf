@@ -3,10 +3,11 @@
 import { LineBreaker } from 'linebreak';
 import {
   type Block,
+  type ContainerBlock,
+  type ContainerKind,
   type DocumentModel,
   mergeAdjacent,
   type PageGeometry,
-  type SectionBlock,
   type TextBlock,
   type TextKind,
   type TextRun,
@@ -64,24 +65,30 @@ export type LaidOutText = {
   frame?: Frame;
   lines: Line[];
 };
-export type LaidOutSection = {
-  kind: 'Sect';
-  source: SectionBlock;
+export type LaidOutContainer = {
+  kind: ContainerKind;
+  source: ContainerBlock;
   lang?: string;
   frame?: Frame;
   children: LaidOutBlock[];
 };
-export type LaidOutBlock = LaidOutText | LaidOutSection;
+export type LaidOutBlock = LaidOutText | LaidOutContainer;
 /** One physical page of the PDF. */
 export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
 
 const EPSILON = 0.01;
+/** Space between a list item's label and its content, in points. */
+const LABEL_GAP = 6;
 
-const elementName = (block: TextBlock | SectionBlock) => (block.kind === 'Sect' ? 'Section' : block.kind);
+const CONTAINER_COMPONENT: Record<ContainerKind, string> = { Sect: 'Section', L: 'List', LI: 'ListItem', LBody: 'ListItem' };
+/** The component a block comes from, for error messages. */
+const elementName = (block: TextBlock | ContainerBlock) =>
+  'children' in block ? CONTAINER_COMPONENT[block.kind] : block.inParent ? 'ListItem' : block.kind;
+const isContainer = (block: LaidOutBlock): block is LaidOutContainer => 'children' in block;
 
 /** A box whose fragment on the current page is still being filled. */
 type OpenBox = {
-  block: TextBlock | SectionBlock;
+  block: TextBlock | ContainerBlock;
   fragment: LaidOutBlock;
   /** Container the fragment was added to, so an empty fragment can move to the next page. */
   container: LaidOutBlock[];
@@ -95,6 +102,8 @@ type OpenBox = {
   top: number;
   /** Whether the block itself starts on the current page (top edge closed). */
   startsHere: boolean;
+  /** A list item's label, until it is placed on the item's first line. */
+  label?: TextBlock;
 };
 
 /**
@@ -125,9 +134,9 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
 
   /** Where the fragment of the box at stack depth `depth` goes: its parent section's fragment, or the page. */
   const containerAt = (depth: number) =>
-    depth === 0 ? page.blocks : (stack[depth - 1]!.fragment as LaidOutSection).children;
+    depth === 0 ? page.blocks : (stack[depth - 1]!.fragment as LaidOutContainer).children;
   const isEmpty = (fragment: LaidOutBlock): boolean =>
-    !fragment.frame && (fragment.kind === 'Sect' ? fragment.children.every(isEmpty) : fragment.lines.length === 0);
+    !fragment.frame && (isContainer(fragment) ? fragment.children.every(isEmpty) : fragment.lines.length === 0);
 
   /** Border and padding at the top of a box that starts here; content then no longer adjoins a break. */
   const openTopEdge = (box: OpenBox) => {
@@ -175,10 +184,9 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       const next = stack[i + 1]?.fragment;
       const base = { source: old.source, ...(old.lang ? { lang: old.lang } : {}) };
       // A moved box keeps its closed children: they are empty, so nothing of them was placed.
-      box.fragment =
-        old.kind === 'Sect'
-          ? { kind: 'Sect', ...base, source: old.source, children: moved ? old.children.filter((c) => c !== next) : [] }
-          : { kind: old.kind, ...base, source: old.source, style: old.style, lines: [] };
+      box.fragment = isContainer(old)
+        ? { kind: old.kind, ...base, source: old.source, children: moved ? old.children.filter((c) => c !== next) : [] }
+        : { kind: old.kind, ...base, source: old.source, style: old.style, lines: [] };
       box.container = containerAt(i);
       box.container.push(box.fragment);
       box.top = y;
@@ -188,7 +196,7 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
     });
   };
 
-  const openBox = (block: TextBlock | SectionBlock, x: number, width: number): OpenBox => {
+  const openBox = (block: TextBlock | ContainerBlock, x: number, width: number): OpenBox => {
     if (pendingBreak) {
       pendingBreak = false;
       newPage();
@@ -207,8 +215,8 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
     }
     const base = block.lang ? { lang: block.lang } : {};
     const fragment: LaidOutBlock =
-      block.kind === 'Sect'
-        ? { kind: 'Sect', source: block, ...base, children: [] }
+      'children' in block
+        ? { kind: block.kind, source: block, ...base, children: [] }
         : { kind: block.kind, source: block, ...base, style: block.style, lines: [] };
     const parent = containerAt(stack.length);
     parent.push(fragment);
@@ -222,6 +230,7 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       innerWidth,
       top: y,
       startsHere: true,
+      ...('label' in block && block.label ? { label: block.label } : {}),
     };
     stack.push(box);
     openTopEdge(box);
@@ -282,10 +291,27 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
         return fragment;
       });
       (box.fragment as LaidOutText).lines.push({ top: y, height: lineBox, fragments });
+      for (const item of stack) if (item.label) placeLabel(item, { top: y, height: lineBox }, baseline);
       y += lineBox;
       atBreak = false;
       hasContent = true;
     }
+  };
+
+  /**
+   * A list item's label goes on its first line, sharing that line's baseline, right-aligned
+   * against the item's content with a gap: in the list's indent. It is the item's first child.
+   */
+  const placeLabel = (item: OpenBox, line: Omit<Line, 'fragments'>, baseline: number) => {
+    const label = item.label!;
+    delete item.label;
+    const run = label.runs[0]!;
+    const metrics = measureFor(run.style);
+    const width = metrics.widthOf(run.text);
+    const x = item.innerX - LABEL_GAP - width;
+    const fragment: Fragment = { text: run.text, x, y: baseline - metrics.ascent, width, run };
+    const lines = [{ ...line, fragments: [fragment] }];
+    (item.fragment as LaidOutContainer).children.unshift({ kind: 'Lbl', source: label, style: label.style, lines });
   };
 
   const place = (block: Block, x: number, width: number) => {
@@ -294,7 +320,7 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       return;
     }
     const box = openBox(block, x, width);
-    if (block.kind === 'Sect') {
+    if ('children' in block) {
       for (const child of block.children) place(child, box.innerX, box.innerWidth);
     } else {
       placeText(box, block);

@@ -17,10 +17,15 @@ import {
   type TextStyle,
 } from './style.js';
 
-/** Structure tag of a text block; layout and paint carry it through to the PDF structure tree. */
-export type TextKind = 'P' | HeadingKind;
+/**
+ * Structure tag of a text block; layout and paint carry it through to the PDF structure tree.
+ * `Lbl` is a list item's generated bullet or number.
+ */
+export type TextKind = 'P' | HeadingKind | 'Lbl';
+/** Structure tag of a block that holds other blocks. */
+export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody';
 /** Structure tag of any block-level element. */
-export type BlockKind = TextKind | 'Sect';
+export type BlockKind = TextKind | ContainerKind;
 /**
  * One `<Link>`. Every run of the link refers to the same object, so its pieces on several
  * lines or pages become one structure element. `contents` is the annotation's `/Contents`.
@@ -42,7 +47,8 @@ export type TextRun = { text: string; style: TextStyle; inline?: InlineElement; 
 /**
  * `text` is all of the block's runs joined. `style` is the block's own text style (its line
  * height applies to every line). `lang` is the element's own `Lang` attribute; absent means
- * inherited from the parent structure element.
+ * inherited from the parent structure element. `inParent` marks the text of a list item, which
+ * is content of the enclosing `LBody` rather than an element of its own.
  */
 export type TextBlock = {
   kind: TextKind;
@@ -51,11 +57,22 @@ export type TextBlock = {
   lang?: string;
   style: TextStyle;
   box: BoxStyle;
+  inParent?: true;
 };
-export type SectionBlock = { kind: 'Sect'; children: Block[]; lang?: string; box: BoxStyle };
+/**
+ * A block of blocks: a `<Section>`, a `<List>`, a `<ListItem>` or a list item's body. `label` is a
+ * list item's bullet or number; layout puts it in the list's indent, on its body's first line.
+ */
+export type ContainerBlock = {
+  kind: ContainerKind;
+  children: Block[];
+  lang?: string;
+  box: BoxStyle;
+  label?: TextBlock;
+};
 /** Forces the following content onto a new page. Not tagged. */
 export type PageBreakBlock = { kind: 'PageBreak' };
-export type Block = TextBlock | SectionBlock | PageBreakBlock;
+export type Block = TextBlock | ContainerBlock | PageBreakBlock;
 /** Page size and margins in points. */
 export type PageGeometry = { width: number; height: number; margin: Sides };
 /** One `<Page>` template: its geometry and the blocks that flow onto as many physical pages as needed. */
@@ -116,8 +133,8 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
   let previous: { block: TextBlock; level: number } | undefined;
   const label = (b: TextBlock) => `<${b.kind}> ${JSON.stringify(b.text.trim().slice(0, 40))}`;
   const visit = (block: Block) => {
-    if (block.kind === 'Sect') return block.children.forEach(visit);
-    if (block.kind === 'P' || block.kind === 'PageBreak') return;
+    if ('children' in block) return block.children.forEach(visit);
+    if (block.kind === 'PageBreak' || !isHeading(block.kind)) return;
     const level = headingLevel(block.kind);
     if (!previous && level > 1) {
       warnings.push(`Heading ${label(block)} is the first heading; PDF/UA expects the first heading to be an <H1>.`);
@@ -134,11 +151,16 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
   return warnings;
 }
 
-const textKinds: Partial<Record<string, TextKind>> = Object.fromEntries(
+const isHeading = (kind: string): kind is HeadingKind => (HEADING_KINDS as readonly string[]).includes(kind);
+
+const textKinds: Partial<Record<string, 'P' | HeadingKind>> = Object.fromEntries(
   (['P', ...HEADING_KINDS] as const).map((kind) => [HostType[kind], kind]),
 );
 
-function toBlock(node: HostNode, parent: string, inherited: InheritedText): Block {
+/** How many lists the content sits in: 0 outside any list. */
+type ListDepth = number;
+
+function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth: ListDepth): Block[] {
   if (node.kind === 'element') {
     const textKind = textKinds[node.type];
     const lang = optionalLang(node);
@@ -148,21 +170,95 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText): Bloc
       const text = inheritText(inherited, own, textKind);
       const runs = mergeRuns(collectRuns(node, text));
       const block = { kind: textKind, text: textOf(runs), runs };
-      return { ...block, style: resolveText(text), box: resolveBox(own, textKind), ...common };
+      return [{ ...block, style: resolveText(text), box: resolveBox(own, textKind), ...common }];
     }
     if (node.type === HostType.Section) {
-      const children = toBlocks(node, inheritText(inherited, own));
-      return { kind: 'Sect', children, box: resolveBox(own), ...common };
+      const children = toBlocks(node, inheritText(inherited, own), depth);
+      return [{ kind: 'Sect', children, box: resolveBox(own), ...common }];
     }
+    if (node.type === HostType.List) return listBlock(node, inherited, depth);
+    if (node.type === HostType.ListItem) throw new Error('<ListItem> must be a child of <List>.');
     if (node.type === HostType.PageBreak) {
       const child = node.children.find((c) => !isBlank(c));
       if (child) throw new Error(`<PageBreak> takes no children, found ${describe(child)}.`);
-      return { kind: 'PageBreak' };
+      return [{ kind: 'PageBreak' }];
     }
   }
+  const inline = parent === 'ListItem' ? 'text, <Span>, <Link>, ' : '';
   throw new Error(
-    `<${parent}> may only contain <P>, ${HEADING_RANGE}, <Section> and <PageBreak> children, found ${describe(node)}.`,
+    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List> and <PageBreak> children, ` +
+      `found ${describe(node)}.`,
   );
+}
+
+/** Bullets of unordered lists by nesting depth, repeating. Both are in practically every text font. */
+const BULLETS = ['•', '–'];
+
+/** A `<List>`: an `L` of `LI`s, each a generated label and an `LBody`. An empty list adds nothing. */
+function listBlock(el: HostElement, inherited: InheritedText, depth: ListDepth): Block[] {
+  const { ordered = false } = el.props;
+  if (typeof ordered !== 'boolean') {
+    throw new Error(`<List> \`ordered\` must be true or false; got ${JSON.stringify(ordered)}.`);
+  }
+  const own = parseStyle(el.props.style, 'List');
+  const text = inheritText(inherited, own);
+  const items = el.children.filter((c) => !isBlank(c));
+  if (items.length === 0) return [];
+  const lang = optionalLang(el);
+  const children = items.map((item, index): ContainerBlock => {
+    if (item.kind !== 'element' || item.type !== HostType.ListItem) {
+      throw new Error(`<List> may only contain <ListItem> children, found ${describe(item)}.`);
+    }
+    const label = ordered ? `${index + 1}.` : BULLETS[depth % BULLETS.length]!;
+    return listItemBlock(item, text, depth + 1, label);
+  });
+  const box = resolveBox(own, depth > 0 ? 'nested L' : 'L');
+  return [{ kind: 'L', children, box, ...(lang ? { lang } : {}) }];
+}
+
+const hasText = (block: Block): boolean =>
+  'children' in block ? block.children.some(hasText) : block.kind !== 'PageBreak';
+
+const isInline = (node: HostNode) => node.kind === 'text' || node.type === HostType.Span || node.type === HostType.Link;
+
+/**
+ * A `<ListItem>`: an `LI` whose `LBody` holds its blocks in order. Each stretch of text (with
+ * `<Span>` and `<Link>`) between blocks becomes a text block that is content of the `LBody` itself.
+ */
+function listItemBlock(el: HostElement, inherited: InheritedText, depth: ListDepth, label: string): ContainerBlock {
+  const own = parseStyle(el.props.style, 'ListItem');
+  const text = inheritText(inherited, own);
+  const lang = optionalLang(el);
+  const body: Block[] = [];
+  let inline: HostNode[] = [];
+  const flushText = () => {
+    const runs = mergeRuns(collectRuns({ ...el, children: inline }, text));
+    inline = [];
+    if (textOf(runs).trim() === '') return;
+    body.push({ kind: 'P', text: textOf(runs), runs, style: resolveText(text), box: resolveBox({}), inParent: true });
+  };
+  for (const child of el.children) {
+    if (isInline(child)) {
+      inline.push(child);
+    } else {
+      flushText();
+      body.push(...toBlock(child, 'ListItem', text, depth));
+    }
+  }
+  flushText();
+  // The label sits on the item's first line of text, so an item needs some.
+  if (!body.some(hasText)) throw new Error('<ListItem> has no content; put its text or blocks inside <ListItem>.');
+  // A label is never underlined, like a browser's list marker.
+  const labelStyle = resolveText({ ...text, textDecoration: 'none' });
+  const lbl: TextBlock = {
+    kind: 'Lbl',
+    text: label,
+    runs: [{ text: label, style: labelStyle }],
+    style: labelStyle,
+    box: resolveBox({}),
+  };
+  const lbody: ContainerBlock = { kind: 'LBody', children: body, box: resolveBox({}) };
+  return { kind: 'LI', children: [lbody], label: lbl, box: resolveBox(own), ...(lang ? { lang } : {}) };
 }
 
 /** Paper sizes in points, portrait. */
@@ -236,8 +332,8 @@ function optionalLang(el: HostElement): string | undefined {
   return value;
 }
 
-const toBlocks = (el: HostElement, inherited: InheritedText): Block[] =>
-  el.children.filter((c) => !isBlank(c)).map((c) => toBlock(c, nameOf(el), inherited));
+const toBlocks = (el: HostElement, inherited: InheritedText, depth: ListDepth = 0): Block[] =>
+  el.children.filter((c) => !isBlank(c)).flatMap((c) => toBlock(c, nameOf(el), inherited, depth));
 
 /** All of the items' text, in order. */
 export const textOf = (items: readonly { text: string }[]) => items.map((i) => i.text).join('');

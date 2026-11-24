@@ -17,6 +17,8 @@ export const HostType = {
   P: 'RTP_P',
   Span: 'RTP_SPAN',
   Link: 'RTP_LINK',
+  List: 'RTP_LIST',
+  ListItem: 'RTP_LIST_ITEM',
   ...headingHostTypes,
 } as const;
 export type HostType = (typeof HostType)[keyof typeof HostType];
@@ -62,6 +64,12 @@ export type PProps = BlockProps;
 
 export type HeadingProps = BlockProps;
 
+export type ListProps = BlockProps & {
+  /** Numbered `1.`, `2.`, `3.`, … when true; bulleted when false (default). */
+  ordered?: boolean;
+};
+export type ListItemProps = BlockProps;
+
 export type SpanProps = {
   /**
    * Natural language of this run of text as a BCP 47 tag, e.g. `en-US`, when it differs from its
@@ -103,6 +111,24 @@ export function Section(props: SectionProps) {
 /** A paragraph of text. Maps to the `P` structure element. */
 export function P(props: PProps) {
   return createElement(HostType.P, props);
+}
+
+/**
+ * A bulleted or (with `ordered`) numbered list. Its only children are `<ListItem>`s; its items
+ * are indented by its left padding (default 24 pt), where their bullets or numbers sit. Maps to
+ * the `L` structure element.
+ */
+export function List(props: ListProps) {
+  return createElement(HostType.List, props);
+}
+
+/**
+ * One item of a `<List>`: text (with `<Span>` and `<Link>`) and blocks, including nested
+ * `<List>`s. Maps to an `LI` structure element holding an `Lbl` (its generated bullet or number)
+ * and an `LBody` (its content). Text directly inside it is content of the `LBody`.
+ */
+export function ListItem(props: ListItemProps) {
+  return createElement(HostType.ListItem, props);
 }
 
 /**

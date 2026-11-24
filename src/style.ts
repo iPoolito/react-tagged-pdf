@@ -1,7 +1,6 @@
 // The `style` prop. Text properties inherit down the tree like CSS; all lengths are points.
 import { DEFAULT_FONT_FAMILY, type FontFace, type FontStyle, type FontWeight, resolveFont, weightNumber } from './fonts.js';
 import { HEADING_FONT_SIZE, HEADING_KINDS, type HeadingKind } from './headings.js';
-import type { TextKind } from './model.js';
 import { isPdfColor } from './pdf.js';
 
 export type Style = {
@@ -94,8 +93,13 @@ export const ROOT_TEXT: InheritedText = {
 
 /** Built-in styles per element, applied under the author's `style` (like a browser's default stylesheet). */
 const TEXT_BLOCK_DEFAULTS: Style = { marginBottom: 6 };
-const ELEMENT_DEFAULTS: Record<TextKind, Style> = {
+const LIST_INDENT = 24;
+/** Elements with built-in styles. A nested list (inside a list item) has no margin, like in browsers. */
+export type StyledKind = 'P' | HeadingKind | 'L' | 'nested L';
+const ELEMENT_DEFAULTS: Record<StyledKind, Style> = {
   P: TEXT_BLOCK_DEFAULTS,
+  L: { paddingLeft: LIST_INDENT, marginBottom: 6 },
+  'nested L': { paddingLeft: LIST_INDENT },
   ...(Object.fromEntries(
     HEADING_KINDS.map((kind) => [kind, { ...TEXT_BLOCK_DEFAULTS, fontSize: HEADING_FONT_SIZE[kind], fontWeight: 'bold' }]),
   ) as Record<HeadingKind, Style>),
@@ -177,7 +181,7 @@ export function parseInlineStyle(raw: unknown, owner: string): InlineStyle {
 
 const describeValue = (v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v) ?? String(v));
 
-export function inheritText(parent: InheritedText, own: Style, kind?: TextKind): InheritedText {
+export function inheritText(parent: InheritedText, own: Style, kind?: StyledKind): InheritedText {
   const merged = { ...(kind ? ELEMENT_DEFAULTS[kind] : undefined), ...own };
   return {
     fontFamily: merged.fontFamily ?? parent.fontFamily,
@@ -206,7 +210,7 @@ const sides = (all: number | undefined, top?: number, right?: number, bottom?: n
 });
 
 /** Box properties of one element: its own style over the element defaults, never inherited. */
-export function resolveBox(own: Style, kind?: TextKind): BoxStyle {
+export function resolveBox(own: Style, kind?: StyledKind): BoxStyle {
   const defaults = kind ? ELEMENT_DEFAULTS[kind] : undefined;
   // A shorthand in the author's style overrides the element's per-side defaults, as in CSS.
   const m = own.margin === undefined ? { ...defaults, ...own } : own;

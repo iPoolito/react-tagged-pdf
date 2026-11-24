@@ -106,13 +106,18 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
 function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elements: Map<object, StructElem>): void {
   // Decoration first, while no structure content is open (artifact marking would close it).
   if (block.frame) paintFrame(doc, block.frame);
+  if (!('children' in block) && block.source.inParent) {
+    // A list item's text: content of the enclosing LBody, no element of its own.
+    paintText(doc, parent, block, elements);
+    return;
+  }
   let elem = elements.get(block.source);
   if (!elem) {
     elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
     parent.add(elem);
     elements.set(block.source, elem);
   }
-  if (block.kind === 'Sect') {
+  if ('children' in block) {
     for (const child of block.children) paintBlock(doc, elem, child, elements);
   } else {
     paintText(doc, elem, block, elements);
@@ -153,7 +158,8 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
         // Close first: text before an inline element must precede that element among its parent's kids.
         close();
         const owner = run.inline ? inlineElem(run.inline) : blockElem;
-        open = { inline: run.inline, owner, content: doc.markStructureContent(run.inline?.kind ?? block.kind) };
+        const tag = run.inline?.kind ?? (block.source.inParent ? 'LBody' : block.kind);
+        open = { inline: run.inline, owner, content: doc.markStructureContent(tag) };
       }
       useFont(doc, run.style).fillColor(run.style.color);
       doc.text(text, x, y, { lineBreak: false });
