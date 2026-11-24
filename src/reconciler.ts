@@ -20,9 +20,7 @@ const updatesNotSupported = () => {
 
 let currentUpdatePriority: number = NoEventPriority;
 
-// Typed loosely on purpose: the reconciler reads many optional keys and its
-// generic host-config type does not track React 19.3's additions precisely.
-const hostConfig: any = {
+const hostConfig = {
   supportsMutation: true,
   supportsPersistence: false,
   supportsHydration: false,
@@ -106,7 +104,31 @@ const hostConfig: any = {
   extraDevToolsConfig: null,
 };
 
-const reconciler = Reconciler(hostConfig);
+type OpaqueRoot = unknown;
+type OnError = (error: unknown) => void;
+/**
+ * The slice of the reconciler API this renderer uses. @types/react-reconciler
+ * (0.34) does not track React 19.3's host-config keys or these entry points
+ * precisely, so the untyped boundary is contained in this one cast.
+ */
+type RenderOnceReconciler = {
+  createContainer(
+    container: Container,
+    tag: typeof LegacyRoot,
+    hydrationCallbacks: null,
+    isStrictMode: boolean,
+    concurrentUpdatesByDefaultOverride: null,
+    identifierPrefix: string,
+    onUncaughtError: OnError,
+    onCaughtError: OnError,
+    onRecoverableError: OnError,
+    transitionCallbacks: null,
+  ): OpaqueRoot;
+  updateContainerSync(element: ReactNode, root: OpaqueRoot, parentComponent: null, callback: null): void;
+  flushSyncWork(): void;
+};
+
+const reconciler = Reconciler(hostConfig as never) as unknown as RenderOnceReconciler;
 
 /** Render `element` once and return the committed host tree. Errors thrown while rendering are rethrown. */
 export function renderTree(element: ReactNode): HostNode[] {
@@ -120,14 +142,13 @@ export function renderTree(element: ReactNode): HostNode[] {
       error = e;
     }
   };
-  const root = (reconciler as any).createContainer(
-    container, LegacyRoot, null, false, null, '', onError, onError, onError, null,
-  );
-  (reconciler as any).updateContainerSync(element, root, null, null);
-  (reconciler as any).flushSyncWork();
-  const children = container.children;
-  (reconciler as any).updateContainerSync(null, root, null, null);
-  (reconciler as any).flushSyncWork();
+  const root = reconciler.createContainer(container, LegacyRoot, null, false, null, '', onError, onError, onError, null);
+  reconciler.updateContainerSync(element, root, null, null);
+  reconciler.flushSyncWork();
+  // Copy before unmounting so the result does not depend on what unmount does to the container.
+  const children = [...container.children];
+  reconciler.updateContainerSync(null, root, null, null);
+  reconciler.flushSyncWork();
   if (failed) throw error;
   return children;
 }
