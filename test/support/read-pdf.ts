@@ -17,10 +17,11 @@ import {
 } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-type TextItem = { str: string; transform: number[]; width: number };
+type TextItem = { str: string; transform: number[]; width: number; fontName: string };
 
 async function withPdfjs<T>(bytes: Uint8Array, fn: (pdf: any) => Promise<T>): Promise<T> {
-  const task = getDocument({ data: new Uint8Array(bytes), verbosity: 0 });
+  // fontExtraProperties keeps each font's PDF name, which textRuns reports.
+  const task = getDocument({ data: new Uint8Array(bytes), verbosity: 0, fontExtraProperties: true, disableFontFace: true });
   try {
     return await fn(await task.promise);
   } finally {
@@ -52,7 +53,10 @@ async function markedContentText(bytes: Uint8Array): Promise<Map<string, string>
 /**
  * Readable outline of the structure tree, one element per line, indented by depth:
  *   Document
- *     P "Hello world"
+ *     P "Read the [Link] today."
+ *       Link "privacy policy" (1 OBJR)
+ * An element's text is its own marked content; a child element inside it shows as `[Tag]`,
+ * and object references (annotations) are counted.
  */
 export async function structOutline(bytes: Uint8Array): Promise<string> {
   const text = await markedContentText(bytes);
@@ -66,14 +70,26 @@ export async function structOutline(bytes: Uint8Array): Promise<string> {
     const pg = (node.get(PDFName.of('Pg')) as PDFRef | undefined) ?? inheritedPg;
     const K = node.get(PDFName.of('K'));
     const kids: PDFObject[] = K instanceof PDFArray ? K.asArray() : K ? [K] : [];
-    let own = '';
+    // Own text in kid order; a child element inside mixed content shows as [Tag] where it sits.
+    const parts: string[] = [];
+    let hasContent = false;
+    let objrs = 0;
     for (const raw of kids) {
       const k = ctx.lookup(raw);
-      if (k instanceof PDFNumber) own += ' ' + mcText(pg, k.asNumber());
-      else if (k instanceof PDFDict && k.get(PDFName.of('Type'))?.toString() === '/MCR') {
-        own += ' ' + mcText(k.get(PDFName.of('Pg')) as PDFRef, (k.get(PDFName.of('MCID')) as PDFNumber).asNumber());
+      const type = k instanceof PDFDict ? k.get(PDFName.of('Type'))?.toString() : undefined;
+      if (k instanceof PDFNumber) {
+        parts.push(mcText(pg, k.asNumber()));
+        hasContent = true;
+      } else if (k instanceof PDFDict && type === '/MCR') {
+        parts.push(mcText(k.get(PDFName.of('Pg')) as PDFRef, (k.get(PDFName.of('MCID')) as PDFNumber).asNumber()));
+        hasContent = true;
+      } else if (k instanceof PDFDict && type === '/OBJR') {
+        objrs++;
+      } else if (k instanceof PDFDict && k.get(PDFName.of('S'))) {
+        parts.push(`[${k.get(PDFName.of('S'))!.toString().slice(1)}]`);
       }
     }
+    const own = hasContent ? parts.join(' ') : '';
     const S = node.get(PDFName.of('S'));
     if (S) {
       const attrs: string[] = [];
@@ -83,7 +99,8 @@ export async function structOutline(bytes: Uint8Array): Promise<string> {
       }
       const t = own.replace(/\s+/g, ' ').trim();
       lines.push(
-        `${'  '.repeat(depth)}${S.toString().slice(1)}${attrs.length ? ` [${attrs.join(' ')}]` : ''}${t ? ` ${JSON.stringify(t)}` : ''}`,
+        `${'  '.repeat(depth)}${S.toString().slice(1)}${attrs.length ? ` [${attrs.join(' ')}]` : ''}${t ? ` ${JSON.stringify(t)}` : ''}` +
+          (objrs ? ` (${objrs} OBJR)` : ''),
       );
     }
     for (const raw of kids) {
@@ -141,24 +158,34 @@ export async function pdfFacts(bytes: Uint8Array): Promise<PdfFacts> {
   };
 }
 
-/** Every text run drawn on each page, with its left x, width, baseline y (PDF user space) and font size. */
+/**
+ * Every text run drawn on each page, with its left x, width, baseline y (PDF user space), font size
+ * and font: the PostScript name without the subset prefix, e.g. `NotoSans-Bold`.
+ */
 export async function textRuns(bytes: Uint8Array) {
   return withPdfjs(bytes, async (pdf) => {
-    type Run = { str: string; x: number; y: number; width: number; size: number };
+    type Run = { str: string; x: number; y: number; width: number; size: number; font: string };
     const pages: { width: number; height: number; runs: Run[] }[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const [, , width, height] = page.view as number[];
       const tc = await page.getTextContent();
-      const runs = (tc.items as TextItem[])
-        .filter((it) => typeof it.str === 'string' && it.str.length > 0)
-        .map((it) => ({
+      // Font objects are only resolved once the page's operator list has been built.
+      await page.getOperatorList();
+      const fontName = (id: string) =>
+        new Promise<string>((resolve) => page.commonObjs.get(id, (f: { name?: string }) => resolve(f?.name ?? '?')));
+      const runs: Run[] = [];
+      for (const it of tc.items as TextItem[]) {
+        if (typeof it.str !== 'string' || it.str.length === 0) continue;
+        runs.push({
           str: it.str,
           x: it.transform[4]!,
           y: it.transform[5]!,
           width: it.width,
           size: Math.hypot(it.transform[2]!, it.transform[3]!),
-        }));
+          font: (await fontName(it.fontName)).replace(/^[A-Z]{6}\+/, ''),
+        });
+      }
       pages.push({ width: width!, height: height!, runs });
     }
     return pages;
@@ -174,4 +201,77 @@ export async function pageContent(bytes: Uint8Array, pageNumber = 1): Promise<st
   return streams
     .map((s) => new TextDecoder('latin1').decode(decodePDFRawStream(s as PDFRawStream).decode()))
     .join('\n');
+}
+
+export type LinkAnnotation = {
+  /** 1-based page the annotation is on. */
+  page: number;
+  /** [x1, y1, x2, y2] in PDF user space (origin bottom left). */
+  rect: number[];
+  uri: string | undefined;
+  contents: string | undefined;
+  structParent: number | undefined;
+  /** Object number and tag of the structure element whose OBJR points at this annotation. */
+  owner: { ref: number; type: string } | undefined;
+  /** Object number of the structure element the ParentTree maps `structParent` to. */
+  parentTreeOwner: number | undefined;
+};
+
+/** Every Link annotation, with the structure element that claims it (via OBJR) and the ParentTree's view of it. */
+export async function linkAnnotations(bytes: Uint8Array): Promise<LinkAnnotation[]> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const ctx = doc.context;
+  const str = (o: PDFObject | undefined) =>
+    o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : undefined;
+
+  const owners = new Map<number, { ref: number; type: string }>();
+  const walk = (ref: PDFRef | undefined, node: PDFDict) => {
+    const K = node.get(PDFName.of('K'));
+    const kids: PDFObject[] = K instanceof PDFArray ? K.asArray() : K ? [K] : [];
+    for (const raw of kids) {
+      const k = ctx.lookup(raw);
+      if (!(k instanceof PDFDict)) continue;
+      if (k.get(PDFName.of('Type'))?.toString() === '/OBJR' && ref) {
+        const obj = k.get(PDFName.of('Obj')) as PDFRef;
+        owners.set(obj.objectNumber, { ref: ref.objectNumber, type: node.get(PDFName.of('S'))!.toString().slice(1) });
+      } else if (k.get(PDFName.of('S'))) {
+        walk(raw instanceof PDFRef ? raw : undefined, k);
+      }
+    }
+  };
+  const root = doc.catalog.lookupMaybe(PDFName.of('StructTreeRoot'), PDFDict);
+  if (root) walk(undefined, root);
+
+  const parentTree = new Map<number, number>();
+  const readNumberTree = (node: PDFDict | undefined) => {
+    if (!node) return;
+    const nums = node.lookupMaybe(PDFName.of('Nums'), PDFArray)?.asArray() ?? [];
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      const value = nums[i + 1];
+      if (value instanceof PDFRef) parentTree.set((nums[i] as PDFNumber).asNumber(), value.objectNumber);
+    }
+    for (const kid of node.lookupMaybe(PDFName.of('Kids'), PDFArray)?.asArray() ?? []) {
+      readNumberTree(ctx.lookup(kid) as PDFDict);
+    }
+  };
+  readNumberTree(root?.lookupMaybe(PDFName.of('ParentTree'), PDFDict));
+
+  const out: LinkAnnotation[] = [];
+  doc.getPages().forEach((page, i) => {
+    for (const raw of page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)?.asArray() ?? []) {
+      const annot = ctx.lookup(raw) as PDFDict;
+      if (annot.get(PDFName.of('Subtype'))?.toString() !== '/Link') continue;
+      const structParent = (annot.get(PDFName.of('StructParent')) as PDFNumber | undefined)?.asNumber();
+      out.push({
+        page: i + 1,
+        rect: (annot.lookup(PDFName.of('Rect')) as PDFArray).asArray().map((n) => (n as PDFNumber).asNumber()),
+        uri: str(annot.lookupMaybe(PDFName.of('A'), PDFDict)?.lookup(PDFName.of('URI'))),
+        contents: str(annot.lookup(PDFName.of('Contents'))),
+        structParent,
+        owner: raw instanceof PDFRef ? owners.get(raw.objectNumber) : undefined,
+        parentTreeOwner: structParent === undefined ? undefined : parentTree.get(structParent),
+      });
+    }
+  });
+  return out;
 }

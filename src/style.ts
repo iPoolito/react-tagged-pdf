@@ -129,6 +129,22 @@ export function parseStyle(raw: unknown, owner: string): Style {
   return raw as Style;
 }
 
+const INLINE_KEYS = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'color'] as const;
+
+/** Validate the `style` of an inline element: only text properties, which apply to its run of text. */
+export function parseInlineStyle(raw: unknown, owner: string): Style {
+  const style = parseStyle(raw, owner);
+  for (const key of Object.keys(style)) {
+    if (style[key as keyof Style] !== undefined && !(INLINE_KEYS as readonly string[]).includes(key)) {
+      throw new Error(
+        `<${owner}> \`style.${key}\` is not supported on inline elements; use it on the enclosing block. ` +
+          `Inline styles support ${INLINE_KEYS.join(', ')}.`,
+      );
+    }
+  }
+  return style;
+}
+
 const describeValue = (v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v) ?? String(v));
 
 export function inheritText(parent: InheritedText, own: Style, kind?: TextKind): InheritedText {

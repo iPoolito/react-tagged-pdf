@@ -221,7 +221,7 @@ describe('PageBreak', () => {
           <PageBreak />
         </P>,
       ),
-    ).rejects.toThrow('<P> may only contain text, found <PageBreak>.');
+    ).rejects.toThrow('<P> may only contain text, <Span> and <Link>, found <PageBreak>.');
   });
 });
 

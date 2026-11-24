@@ -13,6 +13,8 @@ export const HostType = {
   PageBreak: 'RTP_PAGE_BREAK',
   Section: 'RTP_SECTION',
   P: 'RTP_P',
+  Span: 'RTP_SPAN',
+  Link: 'RTP_LINK',
   ...headingHostTypes,
 } as const;
 export type HostType = (typeof HostType)[keyof typeof HostType];
@@ -58,6 +60,17 @@ export type PProps = BlockProps;
 
 export type HeadingProps = BlockProps;
 
+/**
+ * Text properties an inline element may set. Box properties (margin, padding, border,
+ * background) and lineHeight are block-only.
+ */
+export type InlineStyle = Pick<Style, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'color'>;
+export type SpanProps = {
+  /** Overrides the inherited text style for this run of text, like CSS. */
+  style?: InlineStyle;
+  children?: ReactNode;
+};
+
 /** Root of every PDF. Maps to the `Document` structure element. */
 export function Document(props: DocumentProps) {
   return createElement(HostType.Document, props);
@@ -87,6 +100,35 @@ export function Section(props: SectionProps) {
 /** A paragraph of text. Maps to the `P` structure element. */
 export function P(props: PProps) {
   return createElement(HostType.P, props);
+}
+
+/**
+ * A run of text styled differently from the rest of its paragraph or heading: bold, italic,
+ * another color, size or font. Adds no structure element; its text belongs to the enclosing block.
+ */
+export function Span(props: SpanProps) {
+  return createElement(HostType.Span, props);
+}
+
+export type LinkProps = {
+  /** An external URL with a scheme, e.g. `https://example.com` or `mailto:team@example.com`. */
+  href: string;
+  /**
+   * What assistive technology announces for the link (the annotation's `/Contents`).
+   * Default: the link's visible text.
+   */
+  description?: string;
+  /** Overrides the inherited text style of the link text. */
+  style?: InlineStyle;
+  children?: ReactNode;
+};
+
+/**
+ * An inline hyperlink to an external URL. Maps to a `Link` structure element that holds its
+ * text and a reference to one link annotation per line it occupies.
+ */
+export function Link(props: LinkProps) {
+  return createElement(HostType.Link, props);
 }
 
 function heading(level: HeadingLevel) {

@@ -26,7 +26,8 @@
     "test:ua": "tsx scripts/test-ua.ts",
     "example": "tsx examples/hello.tsx",
     "example:headings": "tsx examples/headings.tsx",
-    "example:pages": "tsx examples/pages.tsx"
+    "example:pages": "tsx examples/pages.tsx",
+    "example:inline": "tsx examples/inline.tsx"
   },
   "peerDependencies": {
     "react": "~19.3.0"

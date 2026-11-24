@@ -1,7 +1,7 @@
 // Layout pass: block flow onto physical pages, greedy line wrapping at UAX #14
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
-import type { Block, DocumentModel, PageGeometry, SectionBlock, TextBlock, TextKind } from './model.js';
+import type { Block, DocumentModel, PageGeometry, SectionBlock, TextBlock, TextKind, TextRun } from './model.js';
 import type { BoxStyle, TextStyle } from './style.js';
 
 /** Measures text set in one resolved text style. */
@@ -9,13 +9,20 @@ export type Measurer = {
   widthOf(text: string): number;
   /** Natural height of one line (ascender to descender plus line gap) in points. */
   lineHeight: number;
+  /** Distance from the top of the glyph box to the baseline, in points. */
+  ascent: number;
 };
 
 /** Metrics provider: layout and paint must use the same fonts. */
 export type Measure = (style: TextStyle) => Measurer;
 
-/** `y` is the top of the glyph box, as PDFKit's `text(str, x, y)` expects. */
-export type Line = { text: string; x: number; y: number };
+/**
+ * A piece of one line set in one run's style. `y` is the top of its glyph box, as PDFKit's
+ * `text(str, x, y)` expects; fragments of different sizes on a line share one baseline.
+ */
+export type Fragment = { text: string; x: number; y: number; width: number; run: TextRun };
+/** One line box: its top and height, and its fragments from left to right. */
+export type Line = { top: number; height: number; fragments: Fragment[] };
 /**
  * A block fragment's border box (top-left origin) and what to paint on it. Absent when there is
  * nothing to paint. An open edge is where the block continues on the previous or next page:
@@ -220,11 +227,23 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
   };
 
   const placeText = (box: OpenBox, block: TextBlock) => {
-    const measure = measureFor(block.style);
-    const lineBox = block.style.lineHeight ?? measure.lineHeight;
-    // Center the glyph box in the line box (half-leading).
-    const halfLeading = (lineBox - measure.lineHeight) / 2;
-    for (const text of wrap(block.text, box.innerWidth, measure)) {
+    const measurers = new Map<TextStyle, Measurer>();
+    const measure = (style: TextStyle) => {
+      let m = measurers.get(style);
+      if (!m) measurers.set(style, (m = measureFor(style)));
+      return m;
+    };
+    /** Space a style needs above and below the baseline: its glyph box centered in the line box (half-leading). */
+    const extent = (style: TextStyle) => {
+      const m = measure(style);
+      const halfLeading = ((block.style.lineHeight ?? m.lineHeight) - m.lineHeight) / 2;
+      return { above: m.ascent + halfLeading, below: m.lineHeight - m.ascent + halfLeading };
+    };
+    const runs = block.runs;
+    for (const pieces of wrap(runs, box.innerWidth, (run, text) => measure(runs[run]!.style).widthOf(text))) {
+      const extents = (pieces.length > 0 ? pieces.map((p) => runs[p.run]!.style) : [block.style]).map(extent);
+      const above = Math.max(...extents.map((e) => e.above));
+      const lineBox = above + Math.max(...extents.map((e) => e.below));
       if (y + lineBox > bottom + EPSILON) {
         newPage();
         if (y + lineBox > bottom + EPSILON) {
@@ -235,7 +254,16 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
           );
         }
       }
-      (box.fragment as LaidOutText).lines.push({ text, x: box.innerX, y: y + halfLeading });
+      const baseline = y + above;
+      let x = box.innerX;
+      const fragments = pieces.map((p): Fragment => {
+        const run = runs[p.run]!;
+        const m = measure(run.style);
+        const fragment = { text: p.text, x, y: baseline - m.ascent, width: m.widthOf(p.text), run };
+        x += fragment.width;
+        return fragment;
+      });
+      (box.fragment as LaidOutText).lines.push({ top: y, height: lineBox, fragments });
       y += lineBox;
       atBreak = false;
       hasContent = true;
@@ -259,35 +287,84 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
   for (const block of blocks) place(block, margin.left, geometry.width - margin.left - margin.right);
 }
 
-/** Greedy wrap. Trailing whitespace never counts toward the fit and is not kept at line ends. */
-export function wrap(text: string, maxWidth: number, measure: Measurer): string[] {
-  const lines: string[] = [];
-  let line = '';
+/** Part of a line taken from one run: `run` indexes the block's runs. */
+export type Piece = { run: number; text: string };
+
+/** `line` followed by `more`, merging neighbouring pieces of the same run. */
+function joinPieces(line: Piece[], more: Piece[]): Piece[] {
+  const out = line.map((p) => ({ ...p }));
+  for (const p of more) {
+    const last = out.at(-1);
+    if (last && last.run === p.run) last.text += p.text;
+    else if (p.text) out.push({ ...p });
+  }
+  return out;
+}
+
+/** `pieces` without the characters `pattern` (anchored at the end) matches, across piece boundaries. */
+function stripEnd(pieces: Piece[], pattern: RegExp): Piece[] {
+  const out = pieces.map((p) => ({ ...p }));
+  while (out.length > 0) {
+    const last = out.at(-1)!;
+    last.text = last.text.replace(pattern, '');
+    if (last.text) break;
+    out.pop();
+  }
+  return out;
+}
+
+const TRAILING_SPACE = /\s+$/;
+const TRAILING_NEWLINE = /[\r\n\x0B\x0C\x85\u2028\u2029]+$/;
+
+/**
+ * Greedy wrap of a block's runs. Break opportunities come from UAX #14 over the whole text,
+ * so a run boundary inside a word is never a break. Trailing whitespace never counts toward
+ * the fit and is not kept at line ends. `widthOf(run, text)` measures text in that run's style.
+ */
+export function wrap(
+  runs: readonly { text: string }[],
+  maxWidth: number,
+  widthOf: (run: number, text: string) => number,
+): Piece[][] {
+  const text = runs.map((r) => r.text).join('');
+  const starts: number[] = [];
+  runs.reduce((offset, r) => (starts.push(offset), offset + r.text.length), 0);
+  /** The text between `from` and `to`, split at run boundaries. */
+  const slice = (from: number, to: number): Piece[] =>
+    runs.flatMap((r, run) => {
+      const [a, b] = [Math.max(from, starts[run]!), Math.min(to, starts[run]! + r.text.length)];
+      return b > a ? [{ run, text: text.slice(a, b) }] : [];
+    });
+  const width = (pieces: Piece[]) => pieces.reduce((sum, p) => sum + widthOf(p.run, p.text), 0);
+  const fitWidth = (pieces: Piece[]) => width(stripEnd(pieces, TRAILING_SPACE));
+
+  const lines: Piece[][] = [];
+  let line: Piece[] = [];
   const push = () => {
-    lines.push(line.trimEnd());
-    line = '';
+    lines.push(stripEnd(line, TRAILING_SPACE));
+    line = [];
   };
 
   const breaker = new LineBreaker(text);
   let last = 0;
   for (let bk = breaker.nextBreak(); bk; bk = breaker.nextBreak()) {
-    let word = text.slice(last, bk.position);
+    let word = slice(last, bk.position);
     last = bk.position;
-    if (bk.required) word = word.replace(/[\r\n\x0B\x0C\x85\u2028\u2029]+$/, '');
+    if (bk.required) word = stripEnd(word, TRAILING_NEWLINE);
 
-    if (line && measure.widthOf((line + word).trimEnd()) > maxWidth) push();
+    if (line.length > 0 && fitWidth(joinPieces(line, word)) > maxWidth) push();
     // A single word wider than the line: break it between characters.
-    while (!line && measure.widthOf(word.trimEnd()) > maxWidth) {
-      const chars = Array.from(word);
+    while (line.length === 0 && fitWidth(word) > maxWidth) {
+      const chars = word.flatMap((p) => Array.from(p.text, (c) => ({ run: p.run, text: c })));
       let n = 1;
-      while (n < chars.length && measure.widthOf(chars.slice(0, n + 1).join('')) <= maxWidth) n++;
-      line = chars.slice(0, n).join('');
-      word = chars.slice(n).join('');
+      while (n < chars.length && width(joinPieces([], chars.slice(0, n + 1))) <= maxWidth) n++;
+      line = joinPieces([], chars.slice(0, n));
+      word = joinPieces([], chars.slice(n));
       push();
     }
-    line += word;
+    line = joinPieces(line, word);
     if (bk.required) push();
   }
-  if (line.trim() || lines.length === 0) push();
+  if (line.some((p) => p.text.trim()) || lines.length === 0) push();
   return lines;
 }

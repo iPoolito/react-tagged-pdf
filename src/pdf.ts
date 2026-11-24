@@ -2,7 +2,8 @@
 // level is configured in createPdfDocument(); keep the workarounds there.
 import PDFDocument from 'pdfkit';
 import { DEFAULT_FONT_PATH } from './fonts.js';
-import type { Frame, LaidOutBlock, LaidOutPage, Measure } from './layout.js';
+import type { Frame, LaidOutBlock, LaidOutPage, LaidOutText, Line, Measure } from './layout.js';
+import type { LinkTarget } from './model.js';
 import type { TextStyle } from './style.js';
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
@@ -61,9 +62,12 @@ export function measurerFor(doc: PdfDoc): Measure {
   return (style) => {
     useFont(doc, style);
     const lineHeight = doc.currentLineHeight(true);
+    // PDFKit's text(str, x, y) puts the baseline this far below y.
+    const ascent = ((doc as unknown as { _font: { ascender: number } })._font.ascender / 1000) * style.fontSize;
     return {
       widthOf: (text) => useFont(doc, style).widthOfString(text),
       lineHeight,
+      ascent,
     };
   };
 }
@@ -99,15 +103,69 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
   }
   if (block.kind === 'Sect') {
     for (const child of block.children) paintBlock(doc, elem, child, elements);
-  } else if (block.lines.length > 0) {
-    const content = doc.markStructureContent(block.kind);
-    useFont(doc, block.style).fillColor(block.style.color);
-    for (const line of block.lines) {
-      if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });
-    }
-    doc.endMarkedContent();
-    elem.add(content);
+  } else {
+    paintText(doc, elem, block, elements);
   }
+}
+
+/**
+ * Text is marked content of the block's element, except link text, which is marked content of
+ * the link's own `Link` element (a child of the block's, in reading order). Each run of
+ * consecutive fragments with the same owner is one marked-content sequence. Every line a link
+ * occupies gets one link annotation, attached to the `Link` element (OBJR + StructParent).
+ */
+function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, elements: Map<object, StructElem>): void {
+  type Open = { link: LinkTarget | undefined; owner: StructElem; content: ReturnType<PdfDoc['markStructureContent']> };
+  let open: Open | undefined;
+  const close = () => {
+    if (!open) return;
+    doc.endMarkedContent();
+    open.owner.add(open.content);
+    open = undefined;
+  };
+  const linkElem = (link: LinkTarget) => {
+    let elem = elements.get(link);
+    if (!elem) {
+      elem = doc.struct('Link');
+      blockElem.add(elem);
+      elements.set(link, elem);
+    }
+    return elem;
+  };
+
+  for (const line of block.lines) {
+    for (const { text, x, y, run } of line.fragments) {
+      if (!open || open.link !== run.link) {
+        // Close first: the block's text before a link must precede the Link element among its kids.
+        close();
+        const owner = run.link ? linkElem(run.link) : blockElem;
+        open = { link: run.link, owner, content: doc.markStructureContent(run.link ? 'Link' : block.kind) };
+      }
+      useFont(doc, run.style).fillColor(run.style.color);
+      doc.text(text, x, y, { lineBreak: false });
+    }
+    for (const { link, x, width } of linkSpans(line)) {
+      doc.link(x, line.top, width, line.height, link.href, {
+        structParent: linkElem(link),
+        // A String object is written as a PDF text string. PDFKit's default is empty, which
+        // veraPDF rejects, so it is always the link text or the author's description.
+        Contents: new String(link.contents),
+      } as never);
+    }
+  }
+  close();
+}
+
+/** Each link's horizontal extent on one line. */
+function linkSpans(line: Line): { link: LinkTarget; x: number; width: number }[] {
+  const spans: { link: LinkTarget; x: number; width: number }[] = [];
+  for (const { run, x, width } of line.fragments) {
+    const last = spans.at(-1);
+    if (!run.link) continue;
+    if (last?.link === run.link) last.width = x + width - last.x;
+    else spans.push({ link: run.link, x, width });
+  }
+  return spans;
 }
 
 /** Background and border are decoration: Layout artifacts, absent from the structure tree. */

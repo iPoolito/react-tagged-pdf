@@ -7,6 +7,7 @@ import {
   type BoxStyle,
   type InheritedText,
   inheritText,
+  parseInlineStyle,
   parseStyle,
   ROOT_TEXT,
   resolveBox,
@@ -19,8 +20,26 @@ import {
 export type TextKind = 'P' | HeadingKind;
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | 'Sect';
-/** `lang` is the element's own `Lang` attribute; absent means inherited from the parent structure element. */
-export type TextBlock = { kind: TextKind; text: string; lang?: string; style: TextStyle; box: BoxStyle };
+/**
+ * One `<Link>`. Every run of the link refers to the same object, so its pieces on several
+ * lines or pages become one structure element. `contents` is the annotation's `/Contents`.
+ */
+export type LinkTarget = { href: string; contents: string };
+/** A stretch of a text block's content set in one resolved style, possibly inside a link. */
+export type TextRun = { text: string; style: TextStyle; link?: LinkTarget };
+/**
+ * `text` is all of the block's runs joined. `style` is the block's own text style (its line
+ * height applies to every line). `lang` is the element's own `Lang` attribute; absent means
+ * inherited from the parent structure element.
+ */
+export type TextBlock = {
+  kind: TextKind;
+  text: string;
+  runs: TextRun[];
+  lang?: string;
+  style: TextStyle;
+  box: BoxStyle;
+};
 export type SectionBlock = { kind: 'Sect'; children: Block[]; lang?: string; box: BoxStyle };
 /** Forces the following content onto a new page. Not tagged. */
 export type PageBreakBlock = { kind: 'PageBreak' };
@@ -114,8 +133,10 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText): Bloc
     const common = lang ? { lang } : {};
     const own = parseStyle(node.props.style, nameOf(node));
     if (textKind) {
-      const style = resolveText(inheritText(inherited, own, textKind));
-      return { kind: textKind, text: collectText(node), style, box: resolveBox(own, textKind), ...common };
+      const text = inheritText(inherited, own, textKind);
+      const runs = mergeRuns(collectRuns(node, text));
+      const block = { kind: textKind, text: runs.map((r) => r.text).join(''), runs };
+      return { ...block, style: resolveText(text), box: resolveBox(own, textKind), ...common };
     }
     if (node.type === HostType.Section) {
       const children = toBlocks(node, inheritText(inherited, own));
@@ -206,13 +227,58 @@ function optionalLang(el: HostElement): string | undefined {
 const toBlocks = (el: HostElement, inherited: InheritedText): Block[] =>
   el.children.filter((c) => !isBlank(c)).map((c) => toBlock(c, nameOf(el), inherited));
 
-function collectText(el: HostElement): string {
-  return el.children
-    .map((c) => {
-      if (c.kind === 'text') return c.text;
-      throw new Error(`<${nameOf(el)}> may only contain text, found ${describe(c)}.`);
-    })
-    .join('');
+const sameStyle = (a: TextStyle, b: TextStyle) =>
+  a.font === b.font && a.fontSize === b.fontSize && a.color === b.color && a.lineHeight === b.lineHeight;
+
+/** Neighbouring runs that look the same become one run. */
+function mergeRuns(runs: TextRun[]): TextRun[] {
+  const out: TextRun[] = [];
+  for (const run of runs) {
+    const last = out.at(-1);
+    if (last && last.link === run.link && sameStyle(last.style, run.style)) last.text += run.text;
+    else if (run.text) out.push({ ...run });
+  }
+  return out;
+}
+
+/** The text of a block in document order, split into runs wherever the style or link changes. */
+function collectRuns(el: HostElement, inherited: InheritedText, link?: LinkTarget): TextRun[] {
+  return el.children.flatMap((c): TextRun[] => {
+    if (c.kind === 'text') return [{ text: c.text, style: resolveText(inherited), ...(link ? { link } : {}) }];
+    if (c.type === HostType.Span) {
+      return collectRuns(c, inheritText(inherited, parseInlineStyle(c.props.style, 'Span')), link);
+    }
+    if (c.type === HostType.Link && !link) return linkRuns(c, inherited);
+    const allowed = link ? 'text and <Span>' : 'text, <Span> and <Link>';
+    throw new Error(`<${nameOf(el)}> may only contain ${allowed}, found ${describe(c)}.`);
+  });
+}
+
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+function linkRuns(el: HostElement, inherited: InheritedText): TextRun[] {
+  const href = requireString(el, 'href', 'an external URL such as "https://example.com".');
+  if (!HAS_SCHEME.test(href) || !URL.canParse(href)) {
+    throw new Error(
+      `<Link> href ${JSON.stringify(href)} is not supported yet: only external URLs with a scheme ` +
+        '(e.g. "https://example.com") are; internal links and anchors are not.',
+    );
+  }
+  const { description } = el.props;
+  if (description !== undefined && (typeof description !== 'string' || description.trim() === '')) {
+    throw new Error(
+      `<Link> \`description\` must be a non-empty string (it is what assistive technology announces); ` +
+        `got ${JSON.stringify(description)}. Leave it out to use the link text.`,
+    );
+  }
+  const target: LinkTarget = { href, contents: '' };
+  const runs = collectRuns(el, inheritText(inherited, parseInlineStyle(el.props.style, 'Link')), target);
+  const visible = runs.map((r) => r.text).join('').replace(/\s+/g, ' ').trim();
+  if (!visible) {
+    throw new Error(`<Link> href ${JSON.stringify(href)} has no visible text; put the link text inside <Link>.`);
+  }
+  target.contents = typeof description === 'string' ? description.trim() : visible;
+  return runs;
 }
 
 const describe = (node: HostNode) =>
