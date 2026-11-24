@@ -71,6 +71,18 @@ describe('box style', () => {
     }
   });
 
+  it('throws a clear error when margin, border and padding leave no room for content', async () => {
+    // The content box is 595.28 - 2 * 72 = 451.28 pt wide; the Section eats 2 * 200, the P the rest.
+    const element = (
+      <Section style={{ marginLeft: 200, paddingRight: 200 }}>
+        <P style={{ borderWidth: 30 }}>Squeezed</P>
+      </Section>
+    );
+    await expect(render(element)).rejects.toThrow(
+      '<P> has no room for content: margin, border and padding leave a content width of -8.72 pt.',
+    );
+  });
+
   it('paints background and border as Layout artifacts outside the structure tree', async () => {
     const pdf = await render(
       <Section style={{ backgroundColor: '#0000ff', borderWidth: 2, borderColor: '#00ff00' }}>

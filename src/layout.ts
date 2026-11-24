@@ -48,6 +48,13 @@ export function layoutDocument(model: DocumentModel, measureFor: Measure): LaidO
       const outerWidth = width - margin.left - margin.right;
       const innerX = outerX + border + padding.left;
       const innerWidth = outerWidth - 2 * border - padding.left - padding.right;
+      if (!(innerWidth > 0)) {
+        const name = block.kind === 'Sect' ? 'Section' : block.kind;
+        throw new Error(
+          `<${name}> has no room for content: margin, border and padding leave a content width of ` +
+            `${Number(innerWidth.toFixed(2))} pt.`,
+        );
+      }
       y += border + padding.top;
 
       let laidOut: LaidOutBlock;
