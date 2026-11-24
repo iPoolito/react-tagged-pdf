@@ -38,22 +38,29 @@ if (run.status !== 0 && run.status !== 1) {
 }
 
 type RuleSummary = { clause: string; testNumber: number; description: string; failedChecks: number };
-type ValidationResult = { compliant: boolean; details: { ruleSummaries: RuleSummary[] } };
-type Job = { itemDetails: { name: string }; validationResult: ValidationResult | ValidationResult[] };
+type ValidationResult = { compliant: boolean; details?: { ruleSummaries?: RuleSummary[] } };
+type Job = { itemDetails: { name: string }; validationResult?: ValidationResult | ValidationResult[] };
 const jobs: Job[] = JSON.parse(run.stdout).report.jobs;
 
 let failures = 0;
 for (const job of jobs) {
   const name = basename(job.itemDetails.name);
-  const result = ([] as ValidationResult[]).concat(job.validationResult)[0];
-  if (result?.compliant) {
+  const results = ([] as ValidationResult[]).concat(job.validationResult ?? []);
+  if (results.length === 0) {
+    failures++;
+    console.error(`FAIL ${name} (PDF/UA-1): veraPDF returned no validation result`);
+    continue;
+  }
+  if (results.every((r) => r.compliant)) {
     console.log(`PASS ${name} (PDF/UA-1)`);
     continue;
   }
   failures++;
   console.error(`FAIL ${name} (PDF/UA-1)`);
-  for (const rule of result?.details.ruleSummaries ?? []) {
-    console.error(`  ${rule.clause}-${rule.testNumber} (${rule.failedChecks}x): ${rule.description}`);
+  for (const result of results) {
+    for (const rule of result.details?.ruleSummaries ?? []) {
+      console.error(`  ${rule.clause}-${rule.testNumber} (${rule.failedChecks}x): ${rule.description}`);
+    }
   }
 }
 if (jobs.length !== fixtures.length) {
