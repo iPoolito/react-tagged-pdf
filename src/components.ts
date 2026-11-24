@@ -1,4 +1,5 @@
 import { createElement, type ReactNode } from 'react';
+import type { Style } from './style.js';
 
 /** Intrinsic host element names, private to the renderer. */
 export const HostType = {
@@ -30,9 +31,15 @@ export type CommonProps = {
   children?: ReactNode;
 };
 
+/** Props of block-level components. */
+export type BlockProps = CommonProps & {
+  /** Text properties (fontFamily, fontSize, ...) inherit to descendants like CSS. Lengths are points. */
+  style?: Style;
+};
+
 export type PageProps = CommonProps;
-export type SectionProps = CommonProps;
-export type PProps = CommonProps;
+export type SectionProps = BlockProps;
+export type PProps = BlockProps;
 
 export type HeadingProps = PProps;
 

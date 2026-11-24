@@ -2,16 +2,27 @@
 // level is configured in createPdfDocument(); keep the workarounds there.
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
-import type { LaidOutBlock, LaidOutPage, Measurer } from './layout.js';
+import type { LaidOutBlock, LaidOutPage, Measure } from './layout.js';
+import type { TextStyle } from './style.js';
 
-const DEFAULT_FONT = 'NotoSans';
 const DEFAULT_FONT_PATH = fileURLToPath(new URL('../fonts/NotoSans-Regular.ttf', import.meta.url));
-const DEFAULT_FONT_SIZE = 12;
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
 
-/** Select the bundled font at the body size. Layout measures and paint draws with exactly this. */
-const useDefaultFont = (doc: PdfDoc) => doc.font(DEFAULT_FONT).fontSize(DEFAULT_FONT_SIZE);
+const registeredFaces = new WeakMap<PdfDoc, Set<string>>();
+
+/** Select a resolved text style. Layout measures and paint draws with exactly this. */
+function useFont(doc: PdfDoc, style: TextStyle): PdfDoc {
+  const { font } = style;
+  const registered = registeredFaces.get(doc) ?? new Set();
+  registeredFaces.set(doc, registered);
+  if (!registered.has(font.id)) {
+    const src = typeof font.src === 'string' ? font.src : Buffer.from(font.src);
+    doc.registerFont(font.id, src as never);
+    registered.add(font.id);
+  }
+  return doc.font(font.id).fontSize(style.fontSize);
+}
 
 export function createPdfDocument(meta: { title: string; lang: string }): PdfDoc {
   const doc = new PDFDocument({
@@ -35,16 +46,17 @@ export function createPdfDocument(meta: { title: string; lang: string }): PdfDoc
   // is embedded. Regression: test/fixtures/cidset-regression.tsx under `npm run test:ua`
   // (whether the bad CIDSet trips veraPDF depends on the subset's glyph set).
   (doc as unknown as { subset: unknown }).subset = '1';
-  doc.registerFont(DEFAULT_FONT, DEFAULT_FONT_PATH);
-  useDefaultFont(doc);
   return doc;
 }
 
-export function measurerFor(doc: PdfDoc): Measurer {
-  useDefaultFont(doc);
-  return {
-    widthOf: (text) => doc.widthOfString(text),
-    lineHeight: doc.currentLineHeight(true),
+export function measurerFor(doc: PdfDoc): Measure {
+  return (style) => {
+    useFont(doc, style);
+    const lineHeight = doc.currentLineHeight(true);
+    return {
+      widthOf: (text) => useFont(doc, style).widthOfString(text),
+      lineHeight,
+    };
   };
 }
 
@@ -68,7 +80,7 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void 
     for (const child of block.children) paintBlock(doc, elem, child);
   } else {
     const content = doc.markStructureContent(block.kind);
-    useDefaultFont(doc);
+    useFont(doc, block.style);
     for (const line of block.lines) {
       if (line.text) doc.text(line.text, line.x, line.y, { lineBreak: false });
     }

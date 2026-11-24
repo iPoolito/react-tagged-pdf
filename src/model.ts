@@ -2,13 +2,14 @@
 // detected before layout are raised here, with the offending component named.
 import { HostType } from './components.js';
 import type { HostElement, HostNode } from './reconciler.js';
+import { type InheritedText, inheritText, parseStyle, ROOT_TEXT, resolveText, type TextStyle } from './style.js';
 
 /** Structure tag of a text block; layout and paint carry it through to the PDF structure tree. */
 export type TextKind = 'P' | 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6';
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | 'Sect';
 /** `lang` is the element's own `Lang` attribute; absent means inherited from the parent structure element. */
-export type TextBlock = { kind: TextKind; text: string; lang?: string };
+export type TextBlock = { kind: TextKind; text: string; lang?: string; style: TextStyle };
 export type SectionBlock = { kind: 'Sect'; children: Block[]; lang?: string };
 export type Block = TextBlock | SectionBlock;
 export type PageModel = { blocks: Block[] };
@@ -53,7 +54,7 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     }
     const pageLang = optionalLang(child);
     // Page is not a structure element, so its language lands on each top-level block.
-    const blocks = toBlocks(child).map((b) => (b.lang || !pageLang ? b : { ...b, lang: pageLang }));
+    const blocks = toBlocks(child, ROOT_TEXT).map((b) => (b.lang || !pageLang ? b : { ...b, lang: pageLang }));
     pages.push({ blocks });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
@@ -94,13 +95,19 @@ const textKinds: Partial<Record<string, TextKind>> = {
   [HostType.H6]: 'H6',
 };
 
-function toBlock(node: HostNode, parent: string): Block {
+function toBlock(node: HostNode, parent: string, inherited: InheritedText): Block {
   if (node.kind === 'element') {
     const textKind = textKinds[node.type];
     const lang = optionalLang(node);
     const common = lang ? { lang } : {};
-    if (textKind) return { kind: textKind, text: collectText(node), ...common };
-    if (node.type === HostType.Section) return { kind: 'Sect', children: toBlocks(node), ...common };
+    const own = parseStyle(node.props.style, nameOf(node));
+    if (textKind) {
+      const style = resolveText(inheritText(inherited, own, textKind));
+      return { kind: textKind, text: collectText(node), style, ...common };
+    }
+    if (node.type === HostType.Section) {
+      return { kind: 'Sect', children: toBlocks(node, inheritText(inherited, own)), ...common };
+    }
   }
   throw new Error(`<${parent}> may only contain <P>, <H1>–<H6> and <Section> children, found ${describe(node)}.`);
 }
@@ -114,8 +121,8 @@ function optionalLang(el: HostElement): string | undefined {
   return value;
 }
 
-const toBlocks = (el: HostElement): Block[] =>
-  el.children.filter((c) => !isBlank(c)).map((c) => toBlock(c, nameOf(el)));
+const toBlocks = (el: HostElement, inherited: InheritedText): Block[] =>
+  el.children.filter((c) => !isBlank(c)).map((c) => toBlock(c, nameOf(el), inherited));
 
 function collectText(el: HostElement): string {
   return el.children

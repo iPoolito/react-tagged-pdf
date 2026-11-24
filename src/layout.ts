@@ -2,17 +2,22 @@
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
 import type { Block, DocumentModel, TextKind } from './model.js';
+import type { TextStyle } from './style.js';
 
+/** Measures text set in one resolved text style. */
 export type Measurer = {
   widthOf(text: string): number;
   /** Height of one line box in points. */
   lineHeight: number;
 };
 
+/** Metrics provider: layout and paint must use the same fonts. */
+export type Measure = (style: TextStyle) => Measurer;
+
 export type PageGeometry = { width: number; height: number; margin: number };
 
 export type Line = { text: string; x: number; y: number };
-export type LaidOutText = { kind: TextKind; lang?: string; lines: Line[] };
+export type LaidOutText = { kind: TextKind; lang?: string; style: TextStyle; lines: Line[] };
 export type LaidOutSection = { kind: 'Sect'; lang?: string; children: LaidOutBlock[] };
 export type LaidOutBlock = LaidOutText | LaidOutSection;
 export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
@@ -22,7 +27,7 @@ export const DEFAULT_PAGE: PageGeometry = { width: 595.28, height: 841.89, margi
 /** Vertical gap after each paragraph, in points. */
 const PARAGRAPH_GAP = 6;
 
-export function layoutDocument(model: DocumentModel, measure: Measurer): LaidOutPage[] {
+export function layoutDocument(model: DocumentModel, measureFor: Measure): LaidOutPage[] {
   return model.pages.map((page) => {
     const geometry = DEFAULT_PAGE;
     const maxWidth = geometry.width - 2 * geometry.margin;
@@ -30,13 +35,14 @@ export function layoutDocument(model: DocumentModel, measure: Measurer): LaidOut
     let y = geometry.margin;
     const place = (block: Block): LaidOutBlock => {
       if (block.kind === 'Sect') return { kind: 'Sect', lang: block.lang, children: block.children.map(place) };
+      const measure = measureFor(block.style);
       const lines = wrap(block.text, maxWidth, measure).map((text) => {
         const line = { text, x: geometry.margin, y };
         y += measure.lineHeight;
         return line;
       });
       y += PARAGRAPH_GAP;
-      return { kind: block.kind, lang: block.lang, lines };
+      return { kind: block.kind, lang: block.lang, style: block.style, lines };
     };
     const blocks = page.blocks.map(place);
     if (y - PARAGRAPH_GAP > bottom) {
