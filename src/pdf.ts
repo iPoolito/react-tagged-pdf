@@ -62,7 +62,7 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
 }
 
 function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock): void {
-  const elem = doc.struct(block.kind);
+  const elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
   parent.add(elem);
   if (block.kind === 'Sect') {
     for (const child of block.children) paintBlock(doc, elem, child);

@@ -12,8 +12,8 @@ export type Measurer = {
 export type PageGeometry = { width: number; height: number; margin: number };
 
 export type Line = { text: string; x: number; y: number };
-export type LaidOutText = { kind: TextKind; lines: Line[] };
-export type LaidOutSection = { kind: 'Sect'; children: LaidOutBlock[] };
+export type LaidOutText = { kind: TextKind; lang?: string; lines: Line[] };
+export type LaidOutSection = { kind: 'Sect'; lang?: string; children: LaidOutBlock[] };
 export type LaidOutBlock = LaidOutText | LaidOutSection;
 export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
 
@@ -29,14 +29,14 @@ export function layoutDocument(model: DocumentModel, measure: Measurer): LaidOut
     const bottom = geometry.height - geometry.margin;
     let y = geometry.margin;
     const place = (block: Block): LaidOutBlock => {
-      if (block.kind === 'Sect') return { kind: 'Sect', children: block.children.map(place) };
+      if (block.kind === 'Sect') return { kind: 'Sect', lang: block.lang, children: block.children.map(place) };
       const lines = wrap(block.text, maxWidth, measure).map((text) => {
         const line = { text, x: geometry.margin, y };
         y += measure.lineHeight;
         return line;
       });
       y += PARAGRAPH_GAP;
-      return { kind: block.kind, lines };
+      return { kind: block.kind, lang: block.lang, lines };
     };
     const blocks = page.blocks.map(place);
     if (y - PARAGRAPH_GAP > bottom) {

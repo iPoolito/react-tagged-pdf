@@ -7,8 +7,9 @@ import type { HostElement, HostNode } from './reconciler.js';
 export type TextKind = 'P' | 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6';
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | 'Sect';
-export type TextBlock = { kind: TextKind; text: string };
-export type SectionBlock = { kind: 'Sect'; children: Block[] };
+/** `lang` is the element's own `Lang` attribute; absent means inherited from the parent structure element. */
+export type TextBlock = { kind: TextKind; text: string; lang?: string };
+export type SectionBlock = { kind: 'Sect'; children: Block[]; lang?: string };
 export type Block = TextBlock | SectionBlock;
 export type PageModel = { blocks: Block[] };
 export type DocumentModel = {
@@ -50,7 +51,10 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     if (child.kind !== 'element' || child.type !== HostType.Page) {
       throw new Error(`<Document> may only contain <Page> children, found ${describe(child)}.`);
     }
-    pages.push({ blocks: toBlocks(child) });
+    const pageLang = optionalLang(child);
+    // Page is not a structure element, so its language lands on each top-level block.
+    const blocks = toBlocks(child).map((b) => (b.lang || !pageLang ? b : { ...b, lang: pageLang }));
+    pages.push({ blocks });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
   return { title, lang, pages, warnings: checkHeadingLevels(pages) };
@@ -93,10 +97,21 @@ const textKinds: Partial<Record<string, TextKind>> = {
 function toBlock(node: HostNode, parent: string): Block {
   if (node.kind === 'element') {
     const textKind = textKinds[node.type];
-    if (textKind) return { kind: textKind, text: collectText(node) };
-    if (node.type === HostType.Section) return { kind: 'Sect', children: toBlocks(node) };
+    const lang = optionalLang(node);
+    const common = lang ? { lang } : {};
+    if (textKind) return { kind: textKind, text: collectText(node), ...common };
+    if (node.type === HostType.Section) return { kind: 'Sect', children: toBlocks(node), ...common };
   }
   throw new Error(`<${parent}> may only contain <P>, <H1>–<H6> and <Section> children, found ${describe(node)}.`);
+}
+
+function optionalLang(el: HostElement): string | undefined {
+  const value = el.props.lang;
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`<${nameOf(el)}> \`lang\` must be a non-empty BCP 47 language tag, e.g. lang="es-ES".`);
+  }
+  return value;
 }
 
 const toBlocks = (el: HostElement): Block[] =>

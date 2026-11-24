@@ -23,17 +23,16 @@ export type DocumentProps = {
   children?: ReactNode;
 };
 
-export type PageProps = {
+/** Props shared by every component below `<Document>`. */
+export type CommonProps = {
+  /** Natural language of this element's content as a BCP 47 tag, e.g. `es-ES`. Written as the element's `Lang`. */
+  lang?: string;
   children?: ReactNode;
 };
 
-export type SectionProps = {
-  children?: ReactNode;
-};
-
-export type PProps = {
-  children?: ReactNode;
-};
+export type PageProps = CommonProps;
+export type SectionProps = CommonProps;
+export type PProps = CommonProps;
 
 export type HeadingProps = PProps;
 
