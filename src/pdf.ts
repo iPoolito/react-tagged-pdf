@@ -1,11 +1,9 @@
 // Paint pass on upstream PDFKit. Everything PDF/UA-1 needs at the document
 // level is configured in createPdfDocument(); keep the workarounds there.
-import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
+import { DEFAULT_FONT_PATH } from './fonts.js';
 import type { Frame, LaidOutBlock, LaidOutPage, Measure } from './layout.js';
 import type { TextStyle } from './style.js';
-
-const DEFAULT_FONT_PATH = fileURLToPath(new URL('../fonts/NotoSans-Regular.ttf', import.meta.url));
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
 
