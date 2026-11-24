@@ -24,7 +24,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:ua": "tsx scripts/test-ua.ts",
-    "example": "tsx examples/hello.tsx"
+    "example": "tsx examples/hello.tsx",
+    "example:headings": "tsx examples/headings.tsx"
   },
   "peerDependencies": {
     "react": "~19.3.0"
