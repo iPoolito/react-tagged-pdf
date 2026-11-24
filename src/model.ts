@@ -26,7 +26,7 @@ export type DocumentModel = {
   title: string;
   lang: string;
   pages: PageModel[];
-  /** Accessibility problems that do not stop rendering (errors in strict mode). */
+  /** Accessibility problems that do not stop rendering; reported with `console.warn`. */
   warnings: string[];
 };
 

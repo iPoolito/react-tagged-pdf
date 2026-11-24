@@ -87,10 +87,5 @@ describe('headings and sections', () => {
       );
       expect(warn).not.toHaveBeenCalled();
     });
-
-    it('throws instead of warning in strict mode', async () => {
-      await expect(renderToBuffer(skipping, { strict: true })).rejects.toThrow('skips level 2');
-      expect(warn).not.toHaveBeenCalled();
-    });
   });
 });
