@@ -28,7 +28,8 @@
     "example:headings": "tsx examples/headings.tsx",
     "example:pages": "tsx examples/pages.tsx",
     "example:inline": "tsx examples/inline.tsx",
-    "example:lists": "tsx examples/lists.tsx"
+    "example:lists": "tsx examples/lists.tsx",
+    "example:headers": "tsx examples/headers-footers.tsx"
   },
   "peerDependencies": {
     "react": "~19.3.0"
