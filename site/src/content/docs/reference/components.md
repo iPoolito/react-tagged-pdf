@@ -167,3 +167,57 @@ and a `message`:
 | `RTP_HEADING_SKIP` | A heading skips a level going down, e.g. `H1` then `H3`. |
 | `RTP_TABLE_NO_TH` | A `Table` has no `TH` cells. |
 | `RTP_IMAGE_EMPTY_ALT` | An `Image` has an empty `alt`, so it is drawn as decoration. |
+
+### Validation errors
+
+Input that cannot be rendered at all always throws a `ValidationError`, strict mode or not, from
+`renderToBuffer`/`renderToFile` and `Font.register`. It has a stable `code`, the component `path` where known
+(e.g. `Document > Page[1] > Table > TR > TD`; layout problems point at the `Page`, and `Font.register` has none)
+and a `message` that ends with `(at <path>)`. Match on `err.code`, not the message:
+
+```ts
+if (err instanceof ValidationError && err.code === 'RTP_IMAGE_NO_ALT') console.error(err.path);
+```
+
+| Code | Problem |
+|---|---|
+| `RTP_ROOT_NOT_DOCUMENT` | The rendered element is not a single `Document`. |
+| `RTP_DOCUMENT_NO_TITLE` | `Document` has no `title`. |
+| `RTP_DOCUMENT_NO_LANG` | `Document` has no `lang`. |
+| `RTP_DOCUMENT_NO_PAGES` | `Document` has no `Page`. |
+| `RTP_PAGE_INVALID_SIZE` | `Page` `size` is not a known name or `[width, height]`. |
+| `RTP_PAGE_INVALID_MARGIN` | `Page` `margin` is not a non-negative number or `{ top, right, bottom, left }`. |
+| `RTP_PAGE_NO_CONTENT_AREA` | `Page` margins leave no room for content. |
+| `RTP_INVALID_CHILD` | A component is where it is not allowed: wrong parent or child, or children where none are taken. |
+| `RTP_INVALID_PROP` | A prop has the wrong type or a value outside its allowed values. |
+| `RTP_INVALID_LANG` | A `lang` prop is not a non-empty language tag. |
+| `RTP_LINK_IN_ARTIFACT` | A `Link` in an `Artifact` or a running header/footer, where it could not be reached. |
+| `RTP_IMAGE_NO_SRC` | `Image` has no `src`. |
+| `RTP_IMAGE_NO_ALT` | `Image` has neither `alt` nor `decorative`. |
+| `RTP_IMAGE_ALT_AND_DECORATIVE` | `Image` has both `alt` and `decorative`. |
+| `RTP_IMAGE_UNREADABLE` | The image file or bytes are not a readable JPEG or PNG. |
+| `RTP_IMAGE_TOO_WIDE` | The image is wider than the content width it is in. |
+| `RTP_IMAGE_TOO_TALL` | The image is taller than a page's content area. |
+| `RTP_LIST_ITEM_EMPTY` | `ListItem` has no content. |
+| `RTP_TABLE_ROW_EMPTY` | `TR` has no cells. |
+| `RTP_TABLE_RAGGED_ROWS` | The rows of a `Table` have different numbers of cells. |
+| `RTP_TABLE_SPAN_UNSUPPORTED` | A cell has `rowSpan` or `colSpan` other than 1. |
+| `RTP_TABLE_COLUMN_WIDTH_CONFLICT` | Cells of one column set different `style.width`s. |
+| `RTP_TABLE_TOO_WIDE` | Column widths leave no room in the table's content width. |
+| `RTP_TABLE_ROW_TOO_TALL` | A table row is taller than a page's content area. |
+| `RTP_LINK_NO_HREF` | `Link` has no `href`. |
+| `RTP_LINK_HREF_UNSUPPORTED` | `href` is not an external URL with a scheme (internal links are not supported yet). |
+| `RTP_LINK_SCHEME_NOT_ALLOWED` | `href` uses a scheme other than http, https, mailto or tel. |
+| `RTP_LINK_NO_TEXT` | `Link` has no visible text. |
+| `RTP_INVALID_STYLE` | `style` is not an object, or a style value is invalid. |
+| `RTP_UNKNOWN_STYLE_KEY` | `style` has a key the library does not know. |
+| `RTP_STYLE_NOT_SUPPORTED` | A known style key this component does not take, e.g. a margin on a table cell. |
+| `RTP_NO_CONTENT_WIDTH` | Margin, border and padding leave a box or cell no width for content. |
+| `RTP_LINE_TOO_TALL` | One line of text is taller than a page's content area. |
+| `RTP_RUNNING_CONTENT_TOO_TALL` | A running header or footer does not fit in half its page margin. |
+| `RTP_FONT_NO_FAMILY` | `Font.register` without a `family`. |
+| `RTP_FONT_NO_SRC` | `Font.register` without a `src`. |
+| `RTP_FONT_UNREADABLE` | The `Font.register` `src` path is not a readable file. |
+| `RTP_FONT_NOT_REGISTERED` | `style.fontFamily` names a family that is not registered. |
+| `RTP_FONT_NOT_EMBEDDED` | `style.fontFamily` names a PDF standard-14 font, which is not embedded. |
+| `RTP_STATE_UPDATE` | A component updated state after the first render; documents render once. |

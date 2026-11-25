@@ -110,6 +110,24 @@ Problems the library can detect, such as a skipped heading level, a table withou
 an empty `alt`, are printed as warnings with a stable code and the component's path. Pass `{ strict: true }`
 to `renderToBuffer`/`renderToFile` to reject with an `AccessibilityError` instead, which is useful in CI.
 
+Input that cannot be rendered at all, such as an `<Image>` with neither `alt` nor `decorative`, a `<TR>` outside
+a `<Table>` or an unknown `style` key, always throws a `ValidationError`, strict mode or not. Like warnings, it
+has a stable `err.code` (e.g. `RTP_IMAGE_NO_ALT`) and, where known, the component's path in `err.path`
+(e.g. `Document > Page[1] > Section > Image`), so you can tell errors apart without matching on messages:
+
+```tsx
+import { renderToBuffer, ValidationError } from 'react-tagged-pdf';
+
+try {
+  await renderToBuffer(doc);
+} catch (err) {
+  if (err instanceof ValidationError && err.code === 'RTP_IMAGE_NO_ALT') console.error(`Describe the image at ${err.path}`);
+  else throw err;
+}
+```
+
+Every code is listed in the `ValidationCode` type.
+
 ## Why not react-pdf?
 
 [react-pdf](https://github.com/diegomura/react-pdf) is great for visual PDFs, but it does not produce tagged
