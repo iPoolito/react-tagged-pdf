@@ -1,4 +1,4 @@
-export { Artifact, Document, H1, H2, H3, H4, H5, H6, Link, List, ListItem, P, Page, PageBreak, Section, Span, Table, TD, TH, TR } from './components.js';
+export { Artifact, Document, H1, H2, H3, H4, H5, H6, Image, Link, List, ListItem, P, Page, PageBreak, Section, Span, Table, TD, TH, TR } from './components.js';
 export type {
   ArtifactProps,
   ArtifactType,
@@ -7,6 +7,9 @@ export type {
   CommonProps,
   DocumentProps,
   HeadingProps,
+  ImageProps,
+  ImageSource,
+  ImageStyle,
   InlineStyle,
   LinkProps,
   ListItemProps,

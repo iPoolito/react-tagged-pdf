@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import type { ReactNode } from 'react';
 import { layoutDocument, layoutRunningContent } from './layout.js';
 import { buildDocumentModel, runningBlocks } from './model.js';
-import { createPdfDocument, measurerFor, paint, toBuffer } from './pdf.js';
+import { createPdfDocument, imageSizer, measurerFor, paint, toBuffer } from './pdf.js';
 import { renderTree } from './reconciler.js';
 
 export type RenderOptions = {
@@ -16,9 +16,12 @@ export async function renderToBuffer(element: ReactNode, _options: RenderOptions
   for (const warning of model.warnings) console.warn(`react-tagged-pdf: ${warning}`);
   const doc = createPdfDocument(model);
   const measure = measurerFor(doc);
+  const imageSize = imageSizer(doc);
   // Two passes: the flow decides the page count; then each page's header and footer can show it.
-  const pages = layoutDocument(model, measure);
-  layoutRunningContent(pages, measure, (content, info, place) => runningBlocks(renderTree(content(info)), place));
+  const pages = layoutDocument(model, measure, imageSize);
+  layoutRunningContent(pages, measure, imageSize, (content, info, place) =>
+    runningBlocks(renderTree(content(info)), place),
+  );
   paint(doc, pages);
   return toBuffer(doc);
 }

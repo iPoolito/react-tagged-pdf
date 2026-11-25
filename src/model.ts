@@ -1,6 +1,6 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
-import { type ArtifactType, HostType, type RunningContent } from './components.js';
+import { type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
@@ -9,6 +9,7 @@ import {
   parseRowStyle,
   type InheritedText,
   inheritText,
+  parseImageStyle,
   parseInlineStyle,
   parseStyle,
   ROOT_TEXT,
@@ -85,9 +86,23 @@ export type ContainerBlock = {
   columns?: (number | undefined)[];
   artifact?: ArtifactType;
 };
+/**
+ * An `<Image>`. With `alt` it is a `Figure`; without, decoration (an artifact). An empty `alt`
+ * (as in HTML, `alt=""`) is decoration too, with a warning. `width` and `height` are the
+ * author's size in points; layout fills in what is missing from the image's own size.
+ */
+export type ImageBlock = {
+  kind: 'Image';
+  src: ImageSource;
+  alt?: string;
+  lang?: string;
+  width?: number;
+  height?: number;
+  box: BoxStyle;
+};
 /** Forces the following content onto a new page. Not tagged. */
 export type PageBreakBlock = { kind: 'PageBreak' };
-export type Block = TextBlock | ContainerBlock | PageBreakBlock;
+export type Block = TextBlock | ContainerBlock | ImageBlock | PageBreakBlock;
 /** Page size and margins in points. */
 export type PageGeometry = { width: number; height: number; margin: Sides };
 /**
@@ -144,7 +159,28 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     pages.push({ geometry: pageGeometry(child), blocks, ...runningContent(child) });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
-  return { title, lang, pages, warnings: [...checkHeadingLevels(pages), ...checkTableHeaders(pages)] };
+  return { title, lang, pages, warnings: [...checkHeadingLevels(pages), ...checkTableHeaders(pages), ...checkImageAlts(pages)] };
+}
+
+/**
+ * An empty `alt` (as in HTML's `alt=""`) renders as decoration, but is more often a forgotten
+ * description than a decision: ask for `decorative` to say so explicitly.
+ */
+function checkImageAlts(pages: PageModel[]): string[] {
+  const warnings: string[] = [];
+  const visit = (block: Block) => {
+    // Everything in an artifact is decoration, an image with or without alt included.
+    if (block.kind === 'Artifact') return;
+    if ('children' in block) return block.children.forEach(visit);
+    if (block.kind === 'Image' && block.alt === '') {
+      warnings.push(
+        `${imageLabel(block.src)} has an empty \`alt\`, so it is drawn as decoration that screen readers skip. ` +
+          'If it conveys information, describe it in `alt`; if it is decorative, use `decorative` instead.',
+      );
+    }
+  };
+  pages.forEach((page) => page.blocks.forEach(visit));
+  return warnings;
 }
 
 /** Headings must start at H1 and never skip a level going down (PDF/UA-1, veraPDF rule 7.4.2-1). */
@@ -156,7 +192,7 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
     // An artifact's headings are not in the structure tree, so they are not part of the outline.
     if (block.kind === 'Artifact') return;
     if ('children' in block) return block.children.forEach(visit);
-    if (block.kind === 'PageBreak' || !isHeading(block.kind)) return;
+    if (block.kind === 'PageBreak' || block.kind === 'Image' || !isHeading(block.kind)) return;
     const level = headingLevel(block.kind);
     if (!previous && level > 1) {
       warnings.push(`Heading ${label(block)} is the first heading; PDF/UA expects the first heading to be an <H1>.`);
@@ -203,6 +239,7 @@ type ListDepth = number;
 
 function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth: ListDepth): Block[] {
   if (node.kind === 'element') {
+    if (node.type === HostType.Image) return [imageBlock(node)];
     const textKind = textKinds[node.type];
     const lang = optionalLang(node);
     const common = lang ? { lang } : {};
@@ -237,10 +274,58 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
   }
   const inline = parent === 'ListItem' ? 'text, <Span>, <Link>, ' : '';
   throw new Error(
-    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Table>, <Artifact> and <PageBreak> children, ` +
+    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Table>, <Image>, <Artifact> and <PageBreak> children, ` +
       `found ${describe(node)}.`,
   );
 }
+
+/**
+ * An `<Image>`: exactly one of `alt` and `decorative`. The image file itself is read at layout,
+ * which needs its size.
+ */
+function imageBlock(el: HostElement): ImageBlock {
+  const { src, alt, decorative } = el.props;
+  if (!(typeof src === 'string' && src.trim() !== '') && !(src instanceof Uint8Array)) {
+    throw new Error(
+      `<Image> requires a \`src\`: the path of a JPEG or PNG file, or its contents as a Buffer; got ${describeValue(src)}.`,
+    );
+  }
+  const name = imageLabel(src);
+  if (decorative !== undefined && decorative !== true) {
+    throw new Error(`${name} \`decorative\` must be true when given; got ${describeValue(decorative)}.`);
+  }
+  if (alt !== undefined && typeof alt !== 'string') {
+    throw new Error(`${name} \`alt\` must be a string describing the image; got ${describeValue(alt)}.`);
+  }
+  if (alt !== undefined && decorative) {
+    throw new Error(`${name} has both \`alt\` and \`decorative\`; give \`alt\` if it conveys information, else \`decorative\`.`);
+  }
+  if (alt === undefined && !decorative) {
+    throw new Error(
+      `${name} needs a text alternative: give \`alt\` describing what it shows, ` +
+        'or `decorative` if it adds no information (PDF/UA: every image is described or an artifact).',
+    );
+  }
+  const child = el.children.find((c) => !isBlank(c));
+  if (child) throw new Error(`<Image> takes no children, found ${describe(child)}.`);
+  const style = parseImageStyle(el.props.style, 'Image');
+  const lang = optionalLang(el);
+  return {
+    kind: 'Image',
+    src,
+    ...(typeof alt === 'string' ? { alt: alt.trim() } : {}),
+    ...(lang ? { lang } : {}),
+    ...(style.width === undefined ? {} : { width: style.width }),
+    ...(style.height === undefined ? {} : { height: style.height }),
+    box: resolveBox(style),
+  };
+}
+
+/** How messages name an image: `<Image> "path"`, or `<Image> (n bytes)`. */
+export const imageLabel = (src: ImageSource) =>
+  `<Image> ${typeof src === 'string' ? JSON.stringify(src) : `(${src.byteLength} bytes)`}`;
+
+const describeValue = (v: unknown) => (v instanceof Uint8Array ? `${v.byteLength} bytes` : (JSON.stringify(v) ?? String(v)));
 
 /** Bullets of unordered lists by nesting depth, repeating. Both are in practically every text font. */
 const BULLETS = ['•', '–'];
@@ -268,7 +353,7 @@ function listBlock(el: HostElement, inherited: InheritedText, depth: ListDepth):
 }
 
 const hasText = (block: Block): boolean =>
-  'children' in block ? block.children.some(hasText) : block.kind !== 'PageBreak';
+  'children' in block ? block.children.some(hasText) : block.kind !== 'PageBreak' && block.kind !== 'Image';
 
 const isInline = (node: HostNode) => node.kind === 'text' || node.type === HostType.Span || node.type === HostType.Link;
 
@@ -466,7 +551,7 @@ export function runningBlocks(nodes: HostNode[], place: RunningPlace): Block[] {
 function rejectLinks(blocks: Block[], owner: string, why: string): void {
   const check = (block: Block) => {
     if ('children' in block) return block.children.forEach(check);
-    if (block.kind !== 'PageBreak' && block.runs.some((run) => run.link)) {
+    if ('runs' in block && block.runs.some((run) => run.link)) {
       throw new Error(`<${owner}> cannot contain <Link>: ${why}, so a link there could not be reached.`);
     }
   };

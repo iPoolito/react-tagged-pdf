@@ -2,8 +2,19 @@
 // level is configured in createPdfDocument(); keep the workarounds there.
 import PDFDocument from 'pdfkit';
 import { DEFAULT_FONT_PATH } from './fonts.js';
-import type { Frame, LaidOutArtifact, LaidOutBlock, LaidOutPage, LaidOutText, Line, Measure } from './layout.js';
-import type { InlineElement, LinkTarget } from './model.js';
+import type { ImageSource } from './components.js';
+import type {
+  Frame,
+  ImageSize,
+  LaidOutArtifact,
+  LaidOutBlock,
+  LaidOutImage,
+  LaidOutPage,
+  LaidOutText,
+  Line,
+  Measure,
+} from './layout.js';
+import { imageLabel, type InlineElement, type LinkTarget } from './model.js';
 import type { TextStyle } from './style.js';
 
 export type PdfDoc = InstanceType<typeof PDFDocument>;
@@ -83,6 +94,40 @@ export function measurerFor(doc: PdfDoc): Measure {
   };
 }
 
+/** The parts of PDFKit's opened image that layout and paint read. */
+type OpenedImage = { width: number; height: number; orientation?: number };
+
+const openedImages = new WeakMap<PdfDoc, Map<ImageSource, OpenedImage>>();
+
+/** An image opened once per document and source, so it is parsed and embedded only once. */
+function openImage(doc: PdfDoc, src: ImageSource): OpenedImage {
+  const cache = openedImages.get(doc) ?? new Map<ImageSource, OpenedImage>();
+  openedImages.set(doc, cache);
+  let image = cache.get(src);
+  if (!image) {
+    try {
+      // PDFKit accepts a path or a Buffer; a plain Uint8Array is wrapped without copying.
+      const input = typeof src === 'string' || Buffer.isBuffer(src) ? src : Buffer.from(src.buffer, src.byteOffset, src.byteLength);
+      // @types/pdfkit (0.17) lacks openImage.
+      image = (doc as unknown as { openImage(src: string | Buffer): OpenedImage }).openImage(input);
+    } catch (error) {
+      throw new Error(`${imageLabel(src)} could not be read as a JPEG or PNG: ${(error as Error).message}`, { cause: error });
+    }
+    cache.set(src, image);
+  }
+  return image;
+}
+
+/** Image sizes for layout, read with the same PDFKit image parser paint embeds with. */
+export function imageSizer(doc: PdfDoc): ImageSize {
+  return (block) => {
+    const image = openImage(doc, block.src);
+    // EXIF orientations 5–8 rotate a JPEG by 90°; PDFKit draws it rotated.
+    const rotated = (image.orientation ?? 1) > 4;
+    return rotated ? { width: image.height, height: image.width } : { width: image.width, height: image.height };
+  };
+}
+
 type StructElem = ReturnType<PdfDoc['struct']>;
 
 /**
@@ -112,6 +157,10 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
   }
   // Decoration first, while no structure content is open (artifact marking would close it).
   if (block.frame) paintFrame(doc, block.frame);
+  if (block.kind === 'Image') {
+    paintImage(doc, parent, block);
+    return;
+  }
   if (!('children' in block) && block.source.inParent) {
     // A list item's text: content of the enclosing LBody, no element of its own.
     paintText(doc, parent, block, elements);
@@ -130,6 +179,41 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
   } else {
     paintText(doc, elem, block, elements);
   }
+}
+
+/**
+ * A described image is a `Figure` whose `Alt` is its description and whose `BBox` is where it is
+ * drawn (a figure is on one page, so its element is created on that page, as PDFKit's bbox
+ * conversion needs). A decorative one (no or empty `alt`) is a Layout artifact.
+ */
+function paintImage(doc: PdfDoc, parent: StructElem, block: LaidOutImage): void {
+  const { x, y, width, height } = block.placement!;
+  const draw = () => drawImage(doc, block);
+  const { alt } = block.source;
+  if (!alt) {
+    doc.markContent('Artifact', { type: 'Layout' });
+    draw();
+    doc.endMarkedContent();
+    return;
+  }
+  const figure = doc.struct('Figure', {
+    alt,
+    // Top-left origin, [left, top, right, bottom]; PDFKit flips it to PDF user space.
+    bbox: [x, y, x + width, y + height],
+    placement: 'Block',
+    ...(block.lang ? { lang: block.lang } : {}),
+  } as never);
+  parent.add(figure);
+  const content = doc.markStructureContent('Figure');
+  draw();
+  doc.endMarkedContent();
+  figure.add(content);
+}
+
+/** Draws an image where layout placed it; the caller marks it as content. */
+function drawImage(doc: PdfDoc, block: LaidOutImage): void {
+  const { x, y, width, height } = block.placement!;
+  doc.image(openImage(doc, block.source.src) as never, x, y, { width, height });
 }
 
 /**
@@ -210,14 +294,16 @@ function linkSpans(line: Line): LinkSpan[] {
 }
 
 /**
- * Decoration or running content: one artifact marked-content sequence holding every frame, line
- * and underline of the blocks, with no structure elements. Screen readers skip it.
+ * Decoration or running content: one artifact marked-content sequence holding every frame, line,
+ * underline and image of the blocks, with no structure elements. Screen readers skip it.
  */
 function paintArtifact(doc: PdfDoc, { type, blocks }: LaidOutArtifact): void {
   doc.markContent('Artifact', { type });
   const draw = (block: LaidOutBlock) => {
     if (block.frame) drawFrame(doc, block.frame);
     if ('children' in block) return block.children.forEach(draw);
+    // Inside an artifact an image is decoration whatever its alt: there is no Figure to carry it.
+    if (block.kind === 'Image') return drawImage(doc, block);
     for (const line of block.lines) {
       for (const { text, x, y, width, run, underline } of line.fragments) {
         useFont(doc, run.style).fillColor(run.style.color);

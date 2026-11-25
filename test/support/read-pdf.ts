@@ -305,13 +305,25 @@ const multiply = (m: Matrix, n: Matrix): Matrix => [
   m[4] * n[1] + m[5] * n[3] + n[5],
 ];
 
+/** Bounds of the rectangle `x y w h` after the matrix `ctm`. */
+function transformRect(ctm: Matrix, x: number, y: number, w: number, h: number) {
+  const corners = [
+    [x, y],
+    [x + w, y + h],
+  ].map(([px, py]) => [ctm[0] * px! + ctm[2] * py! + ctm[4], ctm[1] * px! + ctm[3] * py! + ctm[5]]);
+  const xs = corners.map((c) => c[0]!);
+  const ys = corners.map((c) => c[1]!);
+  return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+}
+
 /**
- * Every rectangle (`re`) drawn on every page, with the marked-content tag it is drawn inside and
- * its bounds after the current transformation matrix. Assumes one operator per line, as PDFKit writes.
+ * Rectangles (`re`) and images (XObjects drawn with `Do`, which fill the unit square) on every
+ * page, with the marked-content tag each is drawn inside and its bounds after the current
+ * transformation matrix. Assumes one operator per line, as PDFKit writes.
  */
-export async function paintedRects(bytes: Uint8Array): Promise<PaintedRect[]> {
+async function paintedShapes(bytes: Uint8Array): Promise<(PaintedRect & { op: 're' | 'Do' })[]> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false });
-  const out: PaintedRect[] = [];
+  const out: (PaintedRect & { op: 're' | 'Do' })[] = [];
   for (let page = 1; page <= doc.getPageCount(); page++) {
     let ctm: Matrix = [1, 0, 0, 1, 0, 0];
     const saved: Matrix[] = [];
@@ -329,22 +341,58 @@ export async function paintedRects(bytes: Uint8Array): Promise<PaintedRect[]> {
       else if (op === 'EMC') tags.pop();
       else if (op === 're' && nums.length === 4) {
         const [x, y, w, h] = nums as [number, number, number, number];
-        const corners = [
-          [x, y],
-          [x + w, y + h],
-        ].map(([px, py]) => [ctm[0] * px! + ctm[2] * py! + ctm[4], ctm[1] * px! + ctm[3] * py! + ctm[5]]);
-        const xs = corners.map((c) => c[0]!);
-        const ys = corners.map((c) => c[1]!);
-        out.push({
-          page,
-          tag: tags.at(-1),
-          x: Math.min(...xs),
-          y: Math.min(...ys),
-          width: Math.max(...xs) - Math.min(...xs),
-          height: Math.max(...ys) - Math.min(...ys),
-        });
+        out.push({ op, page, tag: tags.at(-1), ...transformRect(ctm, x, y, w, h) });
+      } else if (op === 'Do') {
+        out.push({ op, page, tag: tags.at(-1), ...transformRect(ctm, 0, 0, 1, 1) });
       }
     }
   }
+  return out;
+}
+
+/** Every rectangle (`re`) drawn on every page; see `paintedShapes`. */
+export async function paintedRects(bytes: Uint8Array): Promise<PaintedRect[]> {
+  return (await paintedShapes(bytes)).filter((s) => s.op === 're').map(({ op: _, ...rect }) => rect);
+}
+
+/** Every image drawn on every page, with the tag it is drawn in and its bounds in PDF user space. */
+export async function paintedImages(bytes: Uint8Array): Promise<PaintedRect[]> {
+  return (await paintedShapes(bytes)).filter((s) => s.op === 'Do').map(({ op: _, ...rect }) => rect);
+}
+
+export type FigureElement = {
+  alt: string | undefined;
+  /** The `/A` attributes' `/BBox`, [x1, y1, x2, y2] in PDF user space. */
+  bbox: number[] | undefined;
+  placement: string | undefined;
+  /** 1-based page of the element's `/Pg`. */
+  page: number | undefined;
+};
+
+/** Every `Figure` structure element in the tree, in document order. */
+export async function figures(bytes: Uint8Array): Promise<FigureElement[]> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const pageRefs = doc.getPages().map((p) => p.ref.objectNumber);
+  const out: FigureElement[] = [];
+  const walk = (node: PDFDict) => {
+    if (node.get(PDFName.of('S'))?.toString() === '/Figure') {
+      const alt = node.lookup(PDFName.of('Alt'));
+      const attrs = node.lookupMaybe(PDFName.of('A'), PDFDict);
+      const bbox = attrs?.lookupMaybe(PDFName.of('BBox'), PDFArray);
+      const pg = node.get(PDFName.of('Pg'));
+      out.push({
+        alt: alt instanceof PDFString || alt instanceof PDFHexString ? alt.decodeText() : undefined,
+        bbox: bbox?.asArray().map((n) => (n as PDFNumber).asNumber()),
+        placement: attrs?.get(PDFName.of('Placement'))?.toString().slice(1),
+        page: pg instanceof PDFRef ? pageRefs.indexOf(pg.objectNumber) + 1 : undefined,
+      });
+    }
+    for (const raw of kidsOf(node)) {
+      const k = doc.context.lookup(raw);
+      if (k instanceof PDFDict && k.get(PDFName.of('S'))) walk(k);
+    }
+  };
+  const root = doc.catalog.lookupMaybe(PDFName.of('StructTreeRoot'), PDFDict);
+  if (root) for (const raw of kidsOf(root)) walk(doc.context.lookup(raw) as PDFDict);
   return out;
 }

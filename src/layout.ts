@@ -7,6 +7,8 @@ import {
   type ContainerBlock,
   type ContainerKind,
   type DocumentModel,
+  type ImageBlock,
+  imageLabel,
   mergeAdjacent,
   type PageGeometry,
   type PageModel,
@@ -31,6 +33,8 @@ export type Measurer = {
 
 /** Metrics provider: layout and paint must use the same fonts. */
 export type Measure = (style: TextStyle) => Measurer;
+/** An image's own size in pixels, as it is displayed (after any EXIF rotation). */
+export type ImageSize = (block: ImageBlock) => { width: number; height: number };
 
 /** A filled rectangle under a fragment's text (top-left origin), present when its run is underlined. */
 export type Underline = { y: number; thickness: number };
@@ -75,7 +79,17 @@ export type LaidOutContainer = {
   frame?: Frame;
   children: LaidOutBlock[];
 };
-export type LaidOutBlock = LaidOutText | LaidOutContainer;
+/** Where an image is drawn: its top-left corner and size in points (top-left origin). */
+export type ImagePlacement = { x: number; y: number; width: number; height: number };
+/** An image: on one page only. `placement` is absent until it is placed. */
+export type LaidOutImage = {
+  kind: 'Image';
+  source: ImageBlock;
+  lang?: string;
+  frame?: Frame;
+  placement?: ImagePlacement;
+};
+export type LaidOutBlock = LaidOutText | LaidOutContainer | LaidOutImage;
 /** Content painted as one artifact: absent from the structure tree, skipped by assistive technology. */
 export type LaidOutArtifact = { type: ArtifactType; blocks: LaidOutBlock[] };
 /**
@@ -103,13 +117,21 @@ const CONTAINER_COMPONENT: Record<ContainerKind, string> = {
   Artifact: 'Artifact',
 };
 /** The component a block comes from, for error messages. */
-const elementName = (block: TextBlock | ContainerBlock) =>
-  'children' in block ? CONTAINER_COMPONENT[block.kind] : block.inParent ? 'ListItem' : block.kind;
+const elementName = (block: BoxBlock) =>
+  'children' in block
+    ? CONTAINER_COMPONENT[block.kind]
+    : block.kind === 'Image'
+      ? 'Image'
+      : block.inParent
+        ? 'ListItem'
+        : block.kind;
+/** A block that has a box: everything but a page break. */
+type BoxBlock = TextBlock | ContainerBlock | ImageBlock;
 const isContainer = (block: LaidOutBlock): block is LaidOutContainer => 'children' in block;
 
 /** A box whose fragment on the current page is still being filled. */
 type OpenBox = {
-  block: TextBlock | ContainerBlock;
+  block: BoxBlock;
   fragment: LaidOutBlock;
   /** Container the fragment was added to, so an empty fragment can move to the next page. */
   container: LaidOutBlock[];
@@ -133,9 +155,9 @@ type OpenBox = {
  * lines across pages; boxes that split are sliced, and the margin adjoining a page
  * break is dropped. Every `<Page>` template starts on a new physical page.
  */
-export function layoutDocument(model: DocumentModel, measureFor: Measure): LaidOutPage[] {
+export function layoutDocument(model: DocumentModel, measureFor: Measure, imageSize: ImageSize): LaidOutPage[] {
   const pages: LaidOutPage[] = [];
-  for (const template of model.pages) layoutTemplate(template, template.geometry, template.blocks, measureFor, pages);
+  for (const template of model.pages) layoutTemplate(template, template.geometry, template.blocks, measureFor, imageSize, pages);
   return pages;
 }
 
@@ -148,7 +170,12 @@ export type RunningBlocks = (content: RunningContent, info: PageInfo, place: Run
  * margin above the page edge) as Pagination artifacts. They live in the margins, so they never
  * move the flow; content that does not fit its margin throws.
  */
-export function layoutRunningContent(pages: LaidOutPage[], measureFor: Measure, blocksFor: RunningBlocks): void {
+export function layoutRunningContent(
+  pages: LaidOutPage[],
+  measureFor: Measure,
+  imageSize: ImageSize,
+  blocksFor: RunningBlocks,
+): void {
   pages.forEach((page, index) => {
     const info: PageInfo = { pageNumber: index + 1, totalPages: pages.length };
     const { width, height, margin } = page.geometry;
@@ -161,7 +188,7 @@ export function layoutRunningContent(pages: LaidOutPage[], measureFor: Measure, 
       const band = (top: number) => {
         const out: LaidOutPage[] = [];
         const geometry = { width, height: Infinity, margin: { ...margin, top, bottom: 0 } };
-        layoutTemplate(page.template, geometry, blocks, measureFor, out);
+        layoutTemplate(page.template, geometry, blocks, measureFor, imageSize, out);
         return out.flatMap((p) => p.blocks);
       };
       let laidOut: LaidOutBlock[];
@@ -186,7 +213,7 @@ const tooTall = (place: RunningPlace, needed: number, room: number, info: PageIn
       `make the ${place} smaller or the margin larger.`,
   );
 
-/** Top of the highest and bottom of the lowest painted thing (line or frame) among laid-out blocks. */
+/** Top of the highest and bottom of the lowest painted thing (line, image or frame) among laid-out blocks. */
 function extentOf(blocks: LaidOutBlock[]): { top: number; bottom: number } {
   let top = Infinity;
   let bottom = -Infinity;
@@ -196,6 +223,13 @@ function extentOf(blocks: LaidOutBlock[]): { top: number; bottom: number } {
       bottom = Math.max(bottom, block.frame.y + block.frame.height);
     }
     if (isContainer(block)) return block.children.forEach(visit);
+    if (block.kind === 'Image') {
+      if (block.placement) {
+        top = Math.min(top, block.placement.y);
+        bottom = Math.max(bottom, block.placement.y + block.placement.height);
+      }
+      return;
+    }
     for (const line of block.lines) {
       top = Math.min(top, line.top);
       bottom = Math.max(bottom, line.top + line.height);
@@ -205,11 +239,35 @@ function extentOf(blocks: LaidOutBlock[]): { top: number; bottom: number } {
   return bottom === -Infinity ? { top: 0, bottom: 0 } : { top, bottom };
 }
 
+
+/** A block's empty fragment: what a box holds before anything of it is placed on a page. */
+function emptyFragment(block: BoxBlock): LaidOutBlock {
+  const base = { source: block, ...(block.lang ? { lang: block.lang } : {}) };
+  if ('children' in block) return { kind: block.kind, ...base, source: block, children: [] };
+  if (block.kind === 'Image') return { kind: 'Image', ...base, source: block };
+  return { kind: block.kind, ...base, source: block, style: block.style, lines: [] };
+}
+
+/**
+ * An image's size in points: the author's width and height; with only one of them, the other
+ * keeps the aspect ratio; with neither, one point per pixel, scaled down to `maxWidth`.
+ */
+function imageExtent(block: ImageBlock, imageSize: ImageSize, maxWidth: number): { width: number; height: number } {
+  const { width, height } = block;
+  if (width !== undefined && height !== undefined) return { width, height };
+  const natural = imageSize(block);
+  if (width !== undefined) return { width, height: (width * natural.height) / natural.width };
+  if (height !== undefined) return { width: (height * natural.width) / natural.height, height };
+  const scale = Math.min(1, maxWidth / natural.width);
+  return { width: natural.width * scale, height: natural.height * scale };
+}
+
 function layoutTemplate(
   template: PageModel,
   geometry: PageGeometry,
   blocks: Block[],
   measureFor: Measure,
+  imageSize: ImageSize,
   pages: LaidOutPage[],
 ): void {
   const { margin } = geometry;
@@ -231,7 +289,12 @@ function layoutTemplate(
   const containerAt = (depth: number) =>
     depth === 0 ? page.blocks : (stack[depth - 1]!.fragment as LaidOutContainer).children;
   const isEmpty = (fragment: LaidOutBlock): boolean =>
-    !fragment.frame && (isContainer(fragment) ? fragment.children.every(isEmpty) : fragment.lines.length === 0);
+    !fragment.frame &&
+    (isContainer(fragment)
+      ? fragment.children.every(isEmpty)
+      : fragment.kind === 'Image'
+        ? !fragment.placement
+        : fragment.lines.length === 0);
 
   /** Border and padding at the top of a box that starts here; content then no longer adjoins a break. */
   const openTopEdge = (box: OpenBox) => {
@@ -277,11 +340,9 @@ function layoutTemplate(
       const moved = i >= firstMoved;
       const old = box.fragment;
       const next = stack[i + 1]?.fragment;
-      const base = { source: old.source, ...(old.lang ? { lang: old.lang } : {}) };
+      box.fragment = emptyFragment(box.block);
       // A moved box keeps its closed children: they are empty, so nothing of them was placed.
-      box.fragment = isContainer(old)
-        ? { kind: old.kind, ...base, source: old.source, children: moved ? old.children.filter((c) => c !== next) : [] }
-        : { kind: old.kind, ...base, source: old.source, style: old.style, lines: [] };
+      if (isContainer(old) && moved) (box.fragment as LaidOutContainer).children = old.children.filter((c) => c !== next);
       box.container = containerAt(i);
       box.container.push(box.fragment);
       box.top = y;
@@ -291,7 +352,7 @@ function layoutTemplate(
     });
   };
 
-  const openBox = (block: TextBlock | ContainerBlock, x: number, width: number): OpenBox => {
+  const openBox = (block: BoxBlock, x: number, width: number): OpenBox => {
     if (pendingBreak) {
       pendingBreak = false;
       newPage();
@@ -308,11 +369,7 @@ function layoutTemplate(
           `${Number(innerWidth.toFixed(2))} pt.`,
       );
     }
-    const base = block.lang ? { lang: block.lang } : {};
-    const fragment: LaidOutBlock =
-      'children' in block
-        ? { kind: block.kind, source: block, ...base, children: [] }
-        : { kind: block.kind, source: block, ...base, style: block.style, lines: [] };
+    const fragment = emptyFragment(block);
     const parent = containerAt(stack.length);
     parent.push(fragment);
     const box: OpenBox = {
@@ -470,6 +527,31 @@ function layoutTemplate(
     (item.fragment as LaidOutContainer).children.unshift({ kind: 'Lbl', source: label, style: label.style, lines });
   };
 
+  /** An image is never split: one that does not fit the rest of the page moves to the next. */
+  const placeImage = (box: OpenBox, block: ImageBlock) => {
+    const { width, height } = imageExtent(block, imageSize, box.innerWidth);
+    const describe = () => imageLabel(block.src);
+    if (width > box.innerWidth + EPSILON) {
+      throw new Error(
+        `${describe()} is ${Number(width.toFixed(2))} pt wide, wider than the ${Number(box.innerWidth.toFixed(2))} pt ` +
+          'of content width it is in; give it a smaller style.width.',
+      );
+    }
+    if (y + height > bottom + EPSILON) {
+      newPage();
+      if (y + height > bottom + EPSILON) {
+        throw new Error(
+          `${describe()} is ${Number(height.toFixed(2))} pt tall and does not fit in the page content area ` +
+            `(${Number((bottom - y).toFixed(2))} pt below its border and padding); give it a smaller style.height.`,
+        );
+      }
+    }
+    (box.fragment as LaidOutImage).placement = { x: box.innerX, y, width, height };
+    y += height;
+    atBreak = false;
+    hasContent = true;
+  };
+
   const place = (block: Block, x: number, width: number) => {
     if (block.kind === 'PageBreak') {
       if (hasContent) pendingBreak = true;
@@ -480,6 +562,8 @@ function layoutTemplate(
       placeTable(box, block as ContainerBlock);
     } else if ('children' in block) {
       for (const child of block.children) place(child, box.innerX, box.innerWidth);
+    } else if (block.kind === 'Image') {
+      placeImage(box, block);
     } else {
       placeText(box, block);
     }
