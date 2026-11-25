@@ -1,6 +1,7 @@
 // Layout pass: block flow onto physical pages, greedy line wrapping at UAX #14
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
+import type { ArtifactType, PageInfo, RunningContent } from './components.js';
 import {
   type Block,
   type ContainerBlock,
@@ -10,6 +11,8 @@ import {
   imageLabel,
   mergeAdjacent,
   type PageGeometry,
+  type PageModel,
+  type RunningPlace,
   type TextBlock,
   type TextKind,
   type TextRun,
@@ -87,14 +90,32 @@ export type LaidOutImage = {
   placement?: ImagePlacement;
 };
 export type LaidOutBlock = LaidOutText | LaidOutContainer | LaidOutImage;
-/** One physical page of the PDF. */
-export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
+/** Content painted as one artifact: absent from the structure tree, skipped by assistive technology. */
+export type LaidOutArtifact = { type: ArtifactType; blocks: LaidOutBlock[] };
+/**
+ * One physical page of the PDF: the `<Page>` template it comes from, its share of the
+ * template's flow, and its running header and footer (filled in by `layoutRunningContent`).
+ */
+export type LaidOutPage = {
+  geometry: PageGeometry;
+  template: PageModel;
+  blocks: LaidOutBlock[];
+  artifacts: LaidOutArtifact[];
+};
 
 const EPSILON = 0.01;
 /** Space between a list item's label and its content, in points. */
 const LABEL_GAP = 6;
 
-const CONTAINER_COMPONENT: Record<ContainerKind, string> = { Sect: 'Section', L: 'List', LI: 'ListItem', LBody: 'ListItem' };
+const CONTAINER_COMPONENT: Record<ContainerKind, string> = {
+  Sect: 'Section',
+  L: 'List',
+  LI: 'ListItem',
+  LBody: 'ListItem',
+  Table: 'Table',
+  TR: 'TR',
+  Artifact: 'Artifact',
+};
 /** The component a block comes from, for error messages. */
 const elementName = (block: BoxBlock) =>
   'children' in block
@@ -136,9 +157,88 @@ type OpenBox = {
  */
 export function layoutDocument(model: DocumentModel, measureFor: Measure, imageSize: ImageSize): LaidOutPage[] {
   const pages: LaidOutPage[] = [];
-  for (const template of model.pages) layoutTemplate(template.geometry, template.blocks, measureFor, imageSize, pages);
+  for (const template of model.pages) layoutTemplate(template, template.geometry, template.blocks, measureFor, imageSize, pages);
   return pages;
 }
+
+/** Renders a template's running header or footer for one physical page into blocks. */
+export type RunningBlocks = (content: RunningContent, info: PageInfo, place: RunningPlace) => Block[];
+
+/**
+ * Second layout pass: once the number of physical pages is known, lays out each page's running
+ * header (its top half a top margin below the page edge) and footer (its bottom half a bottom
+ * margin above the page edge) as Pagination artifacts. They live in the margins, so they never
+ * move the flow; content that does not fit its margin throws.
+ */
+export function layoutRunningContent(
+  pages: LaidOutPage[],
+  measureFor: Measure,
+  imageSize: ImageSize,
+  blocksFor: RunningBlocks,
+): void {
+  pages.forEach((page, index) => {
+    const info: PageInfo = { pageNumber: index + 1, totalPages: pages.length };
+    const { width, height, margin } = page.geometry;
+    for (const place of ['header', 'footer'] as const) {
+      const content = page.template[place];
+      if (!content) continue;
+      const blocks = blocksFor(content, info, place);
+      if (blocks.length === 0) continue;
+      /** The band's blocks laid out from `top` with no page breaks. */
+      const band = (top: number) => {
+        const out: LaidOutPage[] = [];
+        const geometry = { width, height: Infinity, margin: { ...margin, top, bottom: 0 } };
+        layoutTemplate(page.template, geometry, blocks, measureFor, imageSize, out);
+        return out.flatMap((p) => p.blocks);
+      };
+      let laidOut: LaidOutBlock[];
+      if (place === 'header') {
+        laidOut = band(margin.top / 2);
+        const { bottom } = extentOf(laidOut);
+        if (bottom > margin.top + EPSILON) throw tooTall(place, bottom - margin.top / 2, margin.top / 2, info);
+      } else {
+        const { top, bottom } = extentOf(band(0));
+        laidOut = band(height - margin.bottom / 2 - bottom);
+        if (bottom - top > margin.bottom / 2 + EPSILON) throw tooTall(place, bottom - top, margin.bottom / 2, info);
+      }
+      page.artifacts.push({ type: 'Pagination', blocks: laidOut });
+    }
+  });
+}
+
+const tooTall = (place: RunningPlace, needed: number, room: number, info: PageInfo) =>
+  new Error(
+    `<Page> ${place} on page ${info.pageNumber} is ${Number(needed.toFixed(2))} pt tall but only ` +
+      `${Number(room.toFixed(2))} pt fit (half the ${place === 'header' ? 'top' : 'bottom'} margin); ` +
+      `make the ${place} smaller or the margin larger.`,
+  );
+
+/** Top of the highest and bottom of the lowest painted thing (line, image or frame) among laid-out blocks. */
+function extentOf(blocks: LaidOutBlock[]): { top: number; bottom: number } {
+  let top = Infinity;
+  let bottom = -Infinity;
+  const visit = (block: LaidOutBlock) => {
+    if (block.frame) {
+      top = Math.min(top, block.frame.y);
+      bottom = Math.max(bottom, block.frame.y + block.frame.height);
+    }
+    if (isContainer(block)) return block.children.forEach(visit);
+    if (block.kind === 'Image') {
+      if (block.placement) {
+        top = Math.min(top, block.placement.y);
+        bottom = Math.max(bottom, block.placement.y + block.placement.height);
+      }
+      return;
+    }
+    for (const line of block.lines) {
+      top = Math.min(top, line.top);
+      bottom = Math.max(bottom, line.top + line.height);
+    }
+  };
+  blocks.forEach(visit);
+  return bottom === -Infinity ? { top: 0, bottom: 0 } : { top, bottom };
+}
+
 
 /** A block's empty fragment: what a box holds before anything of it is placed on a page. */
 function emptyFragment(block: BoxBlock): LaidOutBlock {
@@ -163,6 +263,7 @@ function imageExtent(block: ImageBlock, imageSize: ImageSize, maxWidth: number):
 }
 
 function layoutTemplate(
+  template: PageModel,
   geometry: PageGeometry,
   blocks: Block[],
   measureFor: Measure,
@@ -171,7 +272,8 @@ function layoutTemplate(
 ): void {
   const { margin } = geometry;
   const bottom = geometry.height - margin.bottom;
-  let page: LaidOutPage = { geometry, blocks: [] };
+  const newPhysicalPage = (): LaidOutPage => ({ geometry, template, blocks: [], artifacts: [] });
+  let page = newPhysicalPage();
   pages.push(page);
   let y = margin.top;
   /** True right after a page break: the next margin adjoins the break and is dropped. */
@@ -181,6 +283,7 @@ function layoutTemplate(
   /** A `<PageBreak>` waits for the next content, so a trailing break never adds an empty page. */
   let pendingBreak = false;
   const stack: OpenBox[] = [];
+  const measure = memoize(measureFor);
 
   /** Where the fragment of the box at stack depth `depth` goes: its parent section's fragment, or the page. */
   const containerAt = (depth: number) =>
@@ -228,7 +331,7 @@ function layoutTemplate(
       }
     }
 
-    page = { geometry, blocks: [] };
+    page = newPhysicalPage();
     pages.push(page);
     y = margin.top;
     atBreak = true;
@@ -300,51 +403,106 @@ function layoutTemplate(
   };
 
   const placeText = (box: OpenBox, block: TextBlock) => {
-    const measurers = new Map<TextStyle, Measurer>();
-    const measure = (style: TextStyle) => {
-      let m = measurers.get(style);
-      if (!m) measurers.set(style, (m = measureFor(style)));
-      return m;
-    };
-    /** Space a style needs above and below the baseline: its glyph box centered in the line box (half-leading). */
-    const extent = (style: TextStyle) => {
-      const m = measure(style);
-      const halfLeading = ((block.style.lineHeight ?? m.lineHeight) - m.lineHeight) / 2;
-      return { above: m.ascent + halfLeading, below: m.lineHeight - m.ascent + halfLeading };
-    };
-    const runs = block.runs;
-    for (const pieces of wrap(runs, box.innerWidth, (runIndex, text) => measure(runs[runIndex]!.style).widthOf(text))) {
-      const extents = (pieces.length > 0 ? pieces.map((p) => runs[p.runIndex]!.style) : [block.style]).map(extent);
-      const above = Math.max(...extents.map((e) => e.above));
-      const lineBox = above + Math.max(...extents.map((e) => e.below));
-      if (y + lineBox > bottom + EPSILON) {
+    for (const lineBox of lineBoxes(block, box.innerWidth, measure)) {
+      if (y + lineBox.height > bottom + EPSILON) {
         newPage();
-        if (y + lineBox > bottom + EPSILON) {
+        if (y + lineBox.height > bottom + EPSILON) {
           const label = JSON.stringify(block.text.trim().slice(0, 40));
           throw new Error(
-            `<${elementName(block)}> ${label} has a ${Number(lineBox.toFixed(2))} pt line that does not fit ` +
+            `<${elementName(block)}> ${label} has a ${Number(lineBox.height.toFixed(2))} pt line that does not fit ` +
               `in the page content area (${Number((bottom - y).toFixed(2))} pt left below its border and padding).`,
           );
         }
       }
-      const baseline = y + above;
-      let x = box.innerX;
-      const fragments = pieces.map((p): Fragment => {
-        const run = runs[p.runIndex]!;
-        const metrics = measure(run.style);
-        const fragment: Fragment = { text: p.text, x, y: baseline - metrics.ascent, width: metrics.widthOf(p.text), run };
-        if (run.style.textDecoration === 'underline') {
-          fragment.underline = { y: baseline + metrics.underline.offset, thickness: metrics.underline.thickness };
-        }
-        x += fragment.width;
-        return fragment;
-      });
-      (box.fragment as LaidOutText).lines.push({ top: y, height: lineBox, fragments });
-      for (const item of stack) if (item.label) placeLabel(item, { top: y, height: lineBox }, baseline);
-      y += lineBox;
+      const line = placeLine(lineBox, block.runs, box.innerX, y, measure);
+      (box.fragment as LaidOutText).lines.push(line);
+      placePendingLabels(line, y + lineBox.above);
+      y += lineBox.height;
       atBreak = false;
       hasContent = true;
     }
+  };
+
+  /** Labels of list items that have no line yet go on `line`, whose baseline is `baseline`. */
+  const placePendingLabels = (line: Line, baseline: number) => {
+    for (const item of stack) if (item.label) placeLabel(item, line, baseline);
+  };
+
+  /**
+   * A table as one unit: columns side by side, each row as tall as its tallest cell, every cell's
+   * frame as tall as its row. It must fit on one page; when it does not fit below content already
+   * on the current page, it moves to the next page whole.
+   */
+  const placeTable = (box: OpenBox, table: ContainerBlock) => {
+    const columns = table.columns ?? [];
+    const fixed = columns.reduce<number>((sum, w) => sum + (w ?? 0), 0);
+    const flexible = columns.filter((w) => w === undefined).length;
+    const share = flexible > 0 ? (box.innerWidth - fixed) / flexible : 0;
+    if (fixed > box.innerWidth + EPSILON || (flexible > 0 && !(share > 0))) {
+      throw new Error(
+        `<Table> column widths add up to ${round(fixed)} pt, which leaves no room in its ${round(box.innerWidth)} pt ` +
+          `content width${flexible > 0 ? ` for the ${flexible} column(s) without a width` : ''}.`,
+      );
+    }
+    const widths = columns.map((w) => w ?? share);
+    const rows = table.children.map((row) => {
+      const cells = (row as ContainerBlock).children.map((child, column) => {
+        const cell = child as TextBlock;
+        const { borderWidth, padding } = cell.box;
+        const innerWidth = widths[column]! - 2 * borderWidth - padding.left - padding.right;
+        if (!(innerWidth > 0)) {
+          throw new Error(
+            `<${cell.kind}> has no room for content: its column is ${round(widths[column]!)} pt wide and its border ` +
+              `and padding leave a content width of ${round(innerWidth)} pt.`,
+          );
+        }
+        const lines = lineBoxes(cell, innerWidth, measure);
+        const height = 2 * borderWidth + padding.top + padding.bottom + lines.reduce((sum, l) => sum + l.height, 0);
+        return { cell, lines, height };
+      });
+      return { row: row as ContainerBlock, cells, height: Math.max(...cells.map((c) => c.height)) };
+    });
+    const height = rows.reduce((sum, r) => sum + r.height, 0);
+    const end = () => y + height + table.box.padding.bottom + table.box.borderWidth;
+    if (end() > bottom + EPSILON && hasContent) newPage();
+    if (end() > bottom + EPSILON) {
+      const first = rows.flatMap((r) => r.cells).find((c) => c.cell.text.trim())?.cell.text.trim() ?? '';
+      throw new Error(
+        `<Table> starting ${JSON.stringify(first.slice(0, 40))} is ${round(height)} pt tall and does not fit on one ` +
+          `page (${round(bottom - y)} pt available); tables that continue onto the next page are not supported yet.`,
+      );
+    }
+
+    const fragment = box.fragment as LaidOutContainer;
+    for (const { row, cells, height: rowHeight } of rows) {
+      const tr: LaidOutContainer = { kind: 'TR', source: row, ...(row.lang ? { lang: row.lang } : {}), children: [] };
+      fragment.children.push(tr);
+      let x = box.innerX;
+      cells.forEach(({ cell, lines }, column) => {
+        const { borderWidth, padding } = cell.box;
+        let top = y + borderWidth + padding.top;
+        const laid: LaidOutText = {
+          kind: cell.kind,
+          source: cell,
+          ...(cell.lang ? { lang: cell.lang } : {}),
+          style: cell.style,
+          lines: lines.map((lineBox) => {
+            const line = placeLine(lineBox, cell.runs, x + borderWidth + padding.left, top, measure);
+            if (column === 0 && top === y + borderWidth + padding.top) placePendingLabels(line, top + lineBox.above);
+            top += lineBox.height;
+            return line;
+          }),
+        };
+        if (borderWidth > 0 || cell.box.backgroundColor) {
+          laid.frame = { x, y, width: widths[column]!, height: rowHeight, box: cell.box, openTop: false, openBottom: false };
+        }
+        tr.children.push(laid);
+        x += widths[column]!;
+      });
+      y += rowHeight;
+    }
+    atBreak = false;
+    hasContent = true;
   };
 
   /**
@@ -394,7 +552,9 @@ function layoutTemplate(
       return;
     }
     const box = openBox(block, x, width);
-    if ('children' in block) {
+    if (block.kind === 'Table') {
+      placeTable(box, block as ContainerBlock);
+    } else if ('children' in block) {
       for (const child of block.children) place(child, box.innerX, box.innerWidth);
     } else if (block.kind === 'Image') {
       placeImage(box, block);
@@ -405,6 +565,53 @@ function layoutTemplate(
   };
 
   for (const block of blocks) place(block, margin.left, geometry.width - margin.left - margin.right);
+}
+
+const round = (n: number) => Number(n.toFixed(2));
+
+/** `measureFor`, asked once per text style. */
+function memoize(measureFor: Measure): Measure {
+  const measurers = new Map<TextStyle, Measurer>();
+  return (style) => {
+    let m = measurers.get(style);
+    if (!m) measurers.set(style, (m = measureFor(style)));
+    return m;
+  };
+}
+
+/** One wrapped line of a text block before it is placed: its pieces, its height and its baseline's distance from its top. */
+type LineBox = { pieces: Piece[]; above: number; height: number };
+
+/** A text block's lines wrapped to `width`, with each line box's height (the block's `lineHeight`, or its tallest run's). */
+function lineBoxes(block: TextBlock, width: number, measure: Measure): LineBox[] {
+  /** Space a style needs above and below the baseline: its glyph box centered in the line box (half-leading). */
+  const extent = (style: TextStyle) => {
+    const m = measure(style);
+    const halfLeading = ((block.style.lineHeight ?? m.lineHeight) - m.lineHeight) / 2;
+    return { above: m.ascent + halfLeading, below: m.lineHeight - m.ascent + halfLeading };
+  };
+  const runs = block.runs;
+  return wrap(runs, width, (runIndex, text) => measure(runs[runIndex]!.style).widthOf(text)).map((pieces) => {
+    const extents = (pieces.length > 0 ? pieces.map((p) => runs[p.runIndex]!.style) : [block.style]).map(extent);
+    const above = Math.max(...extents.map((e) => e.above));
+    return { pieces, above, height: above + Math.max(...extents.map((e) => e.below)) };
+  });
+}
+
+/** A line box placed with its top at `top` and its text starting at `x`: its fragments share one baseline. */
+function placeLine({ pieces, above, height }: LineBox, runs: readonly TextRun[], x: number, top: number, measure: Measure): Line {
+  const baseline = top + above;
+  const fragments = pieces.map((p): Fragment => {
+    const run = runs[p.runIndex]!;
+    const metrics = measure(run.style);
+    const fragment: Fragment = { text: p.text, x, y: baseline - metrics.ascent, width: metrics.widthOf(p.text), run };
+    if (run.style.textDecoration === 'underline') {
+      fragment.underline = { y: baseline + metrics.underline.offset, thickness: metrics.underline.thickness };
+    }
+    x += fragment.width;
+    return fragment;
+  });
+  return { top, height, fragments };
 }
 
 /** Part of a line taken from one run: `runIndex` indexes the block's runs. */

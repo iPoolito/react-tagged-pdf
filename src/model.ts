@@ -1,10 +1,12 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
-import { HostType, type ImageSource } from './components.js';
+import { type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
   type BoxStyle,
+  parseCellStyle,
+  parseRowStyle,
   type InheritedText,
   inheritText,
   parseImageStyle,
@@ -20,11 +22,18 @@ import {
 
 /**
  * Structure tag of a text block; layout and paint carry it through to the PDF structure tree.
- * `Lbl` is a list item's generated bullet or number.
+ * `Lbl` is a list item's generated bullet or number; `TH` and `TD` are table cells.
  */
-export type TextKind = 'P' | HeadingKind | 'Lbl';
-/** Structure tag of a block that holds other blocks. */
-export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody';
+export type TextKind = 'P' | HeadingKind | 'Lbl' | CellKind;
+/** Structure tag of a table cell. */
+export type CellKind = 'TH' | 'TD';
+/** What a header cell describes: the cells below it (`Column`) or to its right (`Row`). */
+export type Scope = 'Column' | 'Row';
+/**
+ * Structure tag of a block that holds other blocks. `Artifact` is not a structure element: it and
+ * everything in it are painted as one artifact.
+ */
+export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody' | 'Table' | 'TR' | 'Artifact';
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | ContainerKind;
 /**
@@ -59,10 +68,13 @@ export type TextBlock = {
   style: TextStyle;
   box: BoxStyle;
   inParent?: true;
+  /** A header cell's `Scope` attribute. */
+  scope?: Scope;
 };
 /**
- * A block of blocks: a `<Section>`, a `<List>`, a `<ListItem>` or a list item's body. `label` is a
- * list item's bullet or number; layout puts it in the list's indent, on its body's first line.
+ * A block of blocks: a `<Section>`, a `<List>`, a `<ListItem>`, a list item's body or an
+ * `<Artifact>`. `label` is a list item's bullet or number; layout puts it in the list's indent, on
+ * its body's first line. `artifact` is an `<Artifact>`'s type.
  */
 export type ContainerBlock = {
   kind: ContainerKind;
@@ -70,6 +82,9 @@ export type ContainerBlock = {
   lang?: string;
   box: BoxStyle;
   label?: TextBlock;
+  /** A table's column widths in points; `undefined` columns share the remaining width equally. */
+  columns?: (number | undefined)[];
+  artifact?: ArtifactType;
 };
 /**
  * An `<Image>`. With `alt` it is a `Figure`; without, decoration (an artifact). An empty `alt`
@@ -90,8 +105,13 @@ export type PageBreakBlock = { kind: 'PageBreak' };
 export type Block = TextBlock | ContainerBlock | ImageBlock | PageBreakBlock;
 /** Page size and margins in points. */
 export type PageGeometry = { width: number; height: number; margin: Sides };
-/** One `<Page>` template: its geometry and the blocks that flow onto as many physical pages as needed. */
-export type PageModel = { geometry: PageGeometry; blocks: Block[] };
+/**
+ * One `<Page>` template: its geometry, the blocks that flow onto as many physical pages as
+ * needed, and the running header and footer repeated on each of those pages.
+ */
+export type PageModel = { geometry: PageGeometry; blocks: Block[]; header?: RunningContent; footer?: RunningContent };
+/** Where running content goes on a page. */
+export type RunningPlace = 'header' | 'footer';
 export type DocumentModel = {
   title: string;
   lang: string;
@@ -136,10 +156,10 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     const blocks = toBlocks(child, ROOT_TEXT).map((b) =>
       b.kind === 'PageBreak' || b.lang || !pageLang ? b : { ...b, lang: pageLang },
     );
-    pages.push({ geometry: pageGeometry(child), blocks });
+    pages.push({ geometry: pageGeometry(child), blocks, ...runningContent(child) });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
-  return { title, lang, pages, warnings: [...checkHeadingLevels(pages), ...checkImageAlts(pages)] };
+  return { title, lang, pages, warnings: [...checkHeadingLevels(pages), ...checkTableHeaders(pages), ...checkImageAlts(pages)] };
 }
 
 /**
@@ -149,6 +169,8 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
 function checkImageAlts(pages: PageModel[]): string[] {
   const warnings: string[] = [];
   const visit = (block: Block) => {
+    // Everything in an artifact is decoration, an image with or without alt included.
+    if (block.kind === 'Artifact') return;
     if ('children' in block) return block.children.forEach(visit);
     if (block.kind === 'Image' && block.alt === '') {
       warnings.push(
@@ -167,6 +189,8 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
   let previous: { block: TextBlock; level: number } | undefined;
   const label = (b: TextBlock) => `<${b.kind}> ${JSON.stringify(b.text.trim().slice(0, 40))}`;
   const visit = (block: Block) => {
+    // An artifact's headings are not in the structure tree, so they are not part of the outline.
+    if (block.kind === 'Artifact') return;
     if ('children' in block) return block.children.forEach(visit);
     if (block.kind === 'PageBreak' || block.kind === 'Image' || !isHeading(block.kind)) return;
     const level = headingLevel(block.kind);
@@ -180,6 +204,25 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
       );
     }
     previous = { block, level };
+  };
+  pages.forEach((page) => page.blocks.forEach(visit));
+  return warnings;
+}
+
+/** A table without header cells cannot tell a screen reader what its data cells mean. */
+function checkTableHeaders(pages: PageModel[]): string[] {
+  const warnings: string[] = [];
+  const visit = (block: Block) => {
+    // An artifact is hidden from assistive technology: a table in it is decoration, not data.
+    if (!('children' in block) || block.kind === 'Artifact') return;
+    if (block.kind !== 'Table') return block.children.forEach(visit);
+    const cells = block.children.flatMap((row) => ('children' in row ? row.children : []));
+    if (cells.some((cell) => cell.kind === 'TH')) return;
+    const first = cells.map((cell) => ('text' in cell ? cell.text.trim() : '')).find((text) => text !== '') ?? '';
+    warnings.push(
+      `<Table> starting ${JSON.stringify(first.slice(0, 40))} has no <TH> header cells; screen readers need ` +
+        'header cells to announce which row and column a data cell belongs to. Use <TH> for its headers.',
+    );
   };
   pages.forEach((page) => page.blocks.forEach(visit));
   return warnings;
@@ -212,7 +255,17 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
       return [{ kind: 'Sect', children, box: resolveBox(own), ...common }];
     }
     if (node.type === HostType.List) return listBlock(node, inherited, depth);
+    if (node.type === HostType.Artifact) {
+      const children = toBlocks(node, inheritText(inherited, own), depth);
+      rejectLinks(children, 'Artifact', 'an artifact is skipped by assistive technology');
+      return [{ kind: 'Artifact', artifact: artifactType(node), children, box: resolveBox(own) }];
+    }
     if (node.type === HostType.ListItem) throw new Error('<ListItem> must be a child of <List>.');
+    if (node.type === HostType.Table) return tableBlock(node, inherited);
+    if (node.type === HostType.TR) throw new Error('<TR> must be a child of <Table>.');
+    if (node.type === HostType.TH || node.type === HostType.TD) {
+      throw new Error(`<${nameOf(node)}> must be a child of <TR>.`);
+    }
     if (node.type === HostType.PageBreak) {
       const child = node.children.find((c) => !isBlank(c));
       if (child) throw new Error(`<PageBreak> takes no children, found ${describe(child)}.`);
@@ -221,7 +274,7 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
   }
   const inline = parent === 'ListItem' ? 'text, <Span>, <Link>, ' : '';
   throw new Error(
-    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Image> and <PageBreak> children, ` +
+    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Table>, <Image>, <Artifact> and <PageBreak> children, ` +
       `found ${describe(node)}.`,
   );
 }
@@ -342,6 +395,177 @@ function listItemBlock(el: HostElement, inherited: InheritedText, depth: ListDep
   };
   const lbody: ContainerBlock = { kind: 'LBody', children: body, box: resolveBox({}) };
   return { kind: 'LI', children: [lbody], label: lbl, box: resolveBox(own), ...(lang ? { lang } : {}) };
+}
+
+/**
+ * A `<Table>`: a `Table` of `TR`s of `TH`/`TD` cells, one cell per row and column. Header cells
+ * get a `Scope`; column widths come from the cells' `style.width`. An empty table adds nothing.
+ */
+function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
+  const own = parseStyle(el.props.style, 'Table');
+  const text = inheritText(inherited, own);
+  const rows = el.children.filter((c) => !isBlank(c));
+  if (rows.length === 0) return [];
+  const widths: (number | undefined)[][] = [];
+  const explicitScope = new Set<TextBlock>();
+  const children = rows.map((row): ContainerBlock => {
+    if (row.kind !== 'element' || row.type !== HostType.TR) {
+      throw new Error(`<Table> may only contain <TR> children, found ${describe(row)}.`);
+    }
+    const rowText = inheritText(text, parseRowStyle(row.props.style));
+    const cells = row.children.filter((c) => !isBlank(c));
+    if (cells.length === 0) throw new Error('<TR> has no cells; put <TH> and <TD> cells inside it.');
+    const rowWidths: (number | undefined)[] = [];
+    widths.push(rowWidths);
+    const blocks = cells.map((cell): TextBlock => {
+      if (cell.kind !== 'element' || (cell.type !== HostType.TH && cell.type !== HostType.TD)) {
+        throw new Error(`<TR> may only contain <TH> and <TD> children, found ${describe(cell)}.`);
+      }
+      const block = cellBlock(cell, rowText);
+      if (block.scope) explicitScope.add(block);
+      rowWidths.push(cellWidth(cell));
+      return block;
+    });
+    const lang = optionalLang(row);
+    return { kind: 'TR', children: blocks, box: resolveBox({}), ...(lang ? { lang } : {}) };
+  });
+
+  const grid = children.map((row) => row.children as TextBlock[]);
+  const columnCount = grid[0]!.length;
+  grid.forEach((cells, i) => {
+    if (cells.length !== columnCount) {
+      throw new Error(
+        `<Table> rows must all have the same number of cells: row 1 has ${columnCount}, row ${i + 1} has ` +
+          `${cells.length}. Use an empty <TD/> for a cell with no content; rowSpan and colSpan are not supported yet.`,
+      );
+    }
+  });
+  grid.forEach((cells) =>
+    cells.forEach((cell, column) => {
+      if (cell.kind !== 'TH' || explicitScope.has(cell)) return;
+      const headerRow = cells.every((c) => c.kind === 'TH');
+      cell.scope = !headerRow && column === 0 ? 'Row' : 'Column';
+    }),
+  );
+
+  const columns = Array.from({ length: columnCount }, (_, column) => {
+    const set = widths.map((row) => row[column]).filter((w) => w !== undefined);
+    if (new Set(set).size > 1) {
+      throw new Error(
+        `<Table> column ${column + 1} has cells with different \`style.width\` values (${[...new Set(set)].join(', ')} pt); ` +
+          'set the width on one cell of the column, or the same width on all of them.',
+      );
+    }
+    return set[0];
+  });
+  const lang = optionalLang(el);
+  return [{ kind: 'Table', children, columns, box: resolveBox(own, 'Table'), ...(lang ? { lang } : {}) }];
+}
+
+function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
+  const kind: CellKind = el.type === HostType.TH ? 'TH' : 'TD';
+  for (const prop of ['rowSpan', 'colSpan']) {
+    const value = el.props[prop];
+    if (value !== undefined && value !== 1) {
+      throw new Error(
+        `<${kind}> \`${prop}\` is not supported yet: tables have one cell per row and column; got ${JSON.stringify(value)}.`,
+      );
+    }
+  }
+  const { width: _width, ...own } = parseCellStyle(el.props.style, kind);
+  const text = inheritText(inherited, own, kind);
+  const runs = mergeRuns(collectRuns(el, text));
+  const lang = optionalLang(el);
+  const scope = kind === 'TH' ? optionalScope(el) : undefined;
+  return {
+    kind,
+    text: textOf(runs),
+    runs,
+    style: resolveText(text),
+    box: resolveBox(own, kind),
+    ...(lang ? { lang } : {}),
+    ...(scope ? { scope } : {}),
+  };
+}
+
+function optionalScope(el: HostElement): Scope | undefined {
+  const { scope } = el.props;
+  if (scope === undefined || scope === 'Column' || scope === 'Row') return scope;
+  throw new Error(`<TH> \`scope\` must be 'Column' or 'Row'; got ${JSON.stringify(scope)}.`);
+}
+
+const cellWidth = (el: HostElement): number | undefined =>
+  (el.props.style as { width?: number } | undefined)?.width;
+
+function runningContent(page: HostElement): { header?: RunningContent; footer?: RunningContent } {
+  const out: { header?: RunningContent; footer?: RunningContent } = {};
+  for (const place of ['header', 'footer'] as const) {
+    const value = page.props[place];
+    if (value === undefined) continue;
+    if (typeof value !== 'function') {
+      throw new Error(
+        `<Page> \`${place}\` must be a function of { pageNumber, totalPages } returning its content, e.g. ` +
+          `${place}={({ pageNumber, totalPages }) => <P>Page {pageNumber} of {totalPages}</P>}; got ${JSON.stringify(value)}.`,
+      );
+    }
+    out[place] = value as RunningContent;
+  }
+  return out;
+}
+
+/**
+ * The blocks of a running header or footer, from the host tree its function rendered. Text,
+ * `<Span>` and blocks are allowed; a stretch of text between blocks becomes a paragraph.
+ * Running content is an artifact, hidden from assistive technology, so it cannot hold a `<Link>`.
+ */
+export function runningBlocks(nodes: HostNode[], place: RunningPlace): Block[] {
+  const owner = `Page ${place}`;
+  const el: HostElement = { kind: 'element', type: owner, props: {}, children: [] };
+  const blocks: Block[] = [];
+  let inline: HostNode[] = [];
+  const flushText = () => {
+    const runs = mergeRuns(collectRuns({ ...el, children: inline }, ROOT_TEXT));
+    inline = [];
+    if (textOf(runs).trim() === '') return;
+    blocks.push({ kind: 'P', text: textOf(runs), runs, style: resolveText(ROOT_TEXT), box: resolveBox({}) });
+  };
+  for (const node of nodes) {
+    if (isInline(node)) {
+      inline.push(node);
+    } else {
+      flushText();
+      blocks.push(...toBlock(node, owner, ROOT_TEXT, 0));
+    }
+  }
+  flushText();
+  const noBreaks = (block: Block) => {
+    if (block.kind === 'PageBreak') throw new Error(`<${owner}> cannot contain <PageBreak>.`);
+    if ('children' in block) block.children.forEach(noBreaks);
+  };
+  blocks.forEach(noBreaks);
+  rejectLinks(blocks, owner, 'running headers and footers are artifacts, which assistive technology skips');
+  return blocks;
+}
+
+/** Artifact content cannot hold links: nothing in it is reachable by assistive technology. */
+function rejectLinks(blocks: Block[], owner: string, why: string): void {
+  const check = (block: Block) => {
+    if ('children' in block) return block.children.forEach(check);
+    if ('runs' in block && block.runs.some((run) => run.link)) {
+      throw new Error(`<${owner}> cannot contain <Link>: ${why}, so a link there could not be reached.`);
+    }
+  };
+  blocks.forEach(check);
+}
+
+const ARTIFACT_TYPES: readonly ArtifactType[] = ['Layout', 'Page', 'Pagination'];
+
+function artifactType(el: HostElement): ArtifactType {
+  const { type = 'Layout' } = el.props;
+  if (!ARTIFACT_TYPES.includes(type as ArtifactType)) {
+    throw new Error(`<Artifact> \`type\` must be 'Layout', 'Page' or 'Pagination'; got ${JSON.stringify(type)}.`);
+  }
+  return type as ArtifactType;
 }
 
 /** Paper sizes in points, portrait. */

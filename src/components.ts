@@ -20,6 +20,11 @@ export const HostType = {
   List: 'RTP_LIST',
   ListItem: 'RTP_LIST_ITEM',
   Image: 'RTP_IMAGE',
+  Table: 'RTP_TABLE',
+  TR: 'RTP_TR',
+  TH: 'RTP_TH',
+  TD: 'RTP_TD',
+  Artifact: 'RTP_ARTIFACT',
   ...headingHostTypes,
 } as const;
 export type HostType = (typeof HostType)[keyof typeof HostType];
@@ -52,11 +57,37 @@ export type PageSize = PageSizeName | readonly [width: number, height: number];
 /** Points on all four sides, or per side (a side left out is 72). */
 export type PageMargin = number | { top?: number; right?: number; bottom?: number; left?: number };
 
+/** What a running header or footer is told about the physical page it is drawn on. */
+export type PageInfo = {
+  /** 1-based number of the physical page, counted across the whole document. */
+  pageNumber: number;
+  /** Number of physical pages in the whole document. */
+  totalPages: number;
+};
+/**
+ * Content repeated on every physical page of a `<Page>` template, such as "Page 3 of 7".
+ * Called once per page, after the document is laid out, so `totalPages` is final. Returns
+ * blocks (`<P>`, `<Section>`, ...) or text; `<Link>` is not allowed.
+ */
+export type RunningContent = (info: PageInfo) => ReactNode;
+
 export type PageProps = CommonProps & {
   /** Paper size. Default `'A4'`. */
   size?: PageSize;
   /** Page margins in points. Default 72 on every side. */
   margin?: PageMargin;
+  /**
+   * Running header, drawn in the top margin of every physical page: its top half a top margin
+   * below the page edge. A pagination artifact: screen readers skip it and it is not in the
+   * structure tree. It must fit in the top margin.
+   */
+  header?: RunningContent;
+  /**
+   * Running footer, drawn in the bottom margin of every physical page: its bottom half a bottom
+   * margin above the page edge. A pagination artifact: screen readers skip it and it is not in
+   * the structure tree. It must fit in the bottom margin.
+   */
+  footer?: RunningContent;
 };
 /** `<PageBreak/>` takes no props and no children. */
 export type PageBreakProps = Record<string, never>;
@@ -103,6 +134,45 @@ export type ImageProps = ImageCommonProps &
         alt?: never;
       }
   );
+
+export type TableProps = BlockProps;
+/** A table row takes text properties only (fontFamily, fontSize, ...), which its cells inherit. */
+export type TRProps = CommonProps & { style?: Style };
+/**
+ * Style of a table cell. `width` (points) fixes the width of the cell's column; columns without
+ * one share the remaining width equally. Margins are not supported on cells.
+ */
+export type CellStyle = Style & { width?: number };
+export type TDProps = CommonProps & {
+  style?: CellStyle;
+  /** Not supported yet: throws. */
+  rowSpan?: number;
+  /** Not supported yet: throws. */
+  colSpan?: number;
+};
+export type THProps = TDProps & {
+  /**
+   * Which cells this header describes: `'Column'` (the cells below it) or `'Row'` (the cells to
+   * its right). Default: `'Column'` when its whole row is header cells, `'Row'` when it is the
+   * first cell of a row that has data cells, `'Column'` otherwise.
+   */
+  scope?: 'Column' | 'Row';
+};
+
+/** The `/Type` of an artifact: what kind of decoration it is. */
+export type ArtifactType = 'Layout' | 'Page' | 'Pagination';
+
+export type ArtifactProps = {
+  /**
+   * What the decoration is: `'Layout'` (default) for ornaments, rules and other layout aids,
+   * `'Pagination'` for page furniture such as running heads or page numbers, `'Page'` for
+   * production aids such as cut marks.
+   */
+  type?: ArtifactType;
+  /** Box properties (margin, border, padding, background) and text properties for its content. */
+  style?: Style;
+  children?: ReactNode;
+};
 
 export type SpanProps = {
   /**
@@ -176,6 +246,45 @@ export function ListItem(props: ListItemProps) {
 export function Image(props: ImageProps) {
   // createElement cannot take a union of props types; the host element only needs the props as given.
   return createElement(HostType.Image, props as ImageCommonProps);
+}
+
+/**
+ * A simple data table: rows of header (`<TH>`) and data (`<TD>`) cells, one cell per row and
+ * column. Its only children are `<TR>`s, all with the same number of cells. Columns share the
+ * table's width equally unless a cell's `style.width` fixes its column's width. A table must fit
+ * on one page (it moves to the next page whole when it does not fit on the current one). Maps to
+ * the `Table` structure element. Warns when it has no `<TH>`: screen readers need header cells
+ * to announce which row and column a cell belongs to.
+ */
+export function Table(props: TableProps) {
+  return createElement(HostType.Table, props);
+}
+
+/** A table row of `<TH>` and `<TD>` cells. Maps to the `TR` structure element. */
+export function TR(props: TRProps) {
+  return createElement(HostType.TR, props);
+}
+
+/**
+ * A header cell holding text (with `<Span>` and `<Link>`), bold by default. Maps to the `TH`
+ * structure element with a `Scope` attribute (see `scope`).
+ */
+export function TH(props: THProps) {
+  return createElement(HostType.TH, props);
+}
+
+/** A data cell holding text (with `<Span>` and `<Link>`). Maps to the `TD` structure element. */
+export function TD(props: TDProps) {
+  return createElement(HostType.TD, props);
+}
+
+/**
+ * Decorative content that assistive technology should skip: blocks (text, borders, backgrounds)
+ * that take their place in the flow and are painted, but are absent from the structure tree.
+ * Headings inside it are not headings to a screen reader. It cannot contain `<Link>`.
+ */
+export function Artifact(props: ArtifactProps) {
+  return createElement(HostType.Artifact, props);
 }
 
 /**

@@ -3,7 +3,17 @@
 import PDFDocument from 'pdfkit';
 import { DEFAULT_FONT_PATH } from './fonts.js';
 import type { ImageSource } from './components.js';
-import type { Frame, ImageSize, LaidOutBlock, LaidOutImage, LaidOutPage, LaidOutText, Line, Measure } from './layout.js';
+import type {
+  Frame,
+  ImageSize,
+  LaidOutArtifact,
+  LaidOutBlock,
+  LaidOutImage,
+  LaidOutPage,
+  LaidOutText,
+  Line,
+  Measure,
+} from './layout.js';
 import { imageLabel, type InlineElement, type LinkTarget } from './model.js';
 import type { TextStyle } from './style.js';
 
@@ -133,12 +143,18 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
   for (const page of pages) {
     const { width, height, margin } = page.geometry;
     doc.addPage({ size: [width, height], margins: margin });
+    // Before any structure content on the page: artifact marking would close it.
+    for (const artifact of page.artifacts) paintArtifact(doc, artifact);
     for (const block of page.blocks) paintBlock(doc, root, block, elements);
   }
   root.end();
 }
 
 function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elements: Map<object, StructElem>): void {
+  if (block.kind === 'Artifact') {
+    paintArtifact(doc, { type: block.source.artifact ?? 'Layout', blocks: [block] });
+    return;
+  }
   // Decoration first, while no structure content is open (artifact marking would close it).
   if (block.frame) paintFrame(doc, block.frame);
   if (block.kind === 'Image') {
@@ -152,7 +168,9 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
   }
   let elem = elements.get(block.source);
   if (!elem) {
-    elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
+    const scope = 'scope' in block.source ? block.source.scope : undefined;
+    // A header cell's Scope is written as /A << /O /Table /Scope ... >>.
+    elem = doc.struct(block.kind, { ...(block.lang ? { lang: block.lang } : {}), ...(scope ? { scope } : {}) });
     parent.add(elem);
     elements.set(block.source, elem);
   }
@@ -170,8 +188,7 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
  */
 function paintImage(doc: PdfDoc, parent: StructElem, block: LaidOutImage): void {
   const { x, y, width, height } = block.placement!;
-  const image = openImage(doc, block.source.src);
-  const draw = () => doc.image(image as never, x, y, { width, height });
+  const draw = () => drawImage(doc, block);
   const { alt } = block.source;
   if (!alt) {
     doc.markContent('Artifact', { type: 'Layout' });
@@ -191,6 +208,12 @@ function paintImage(doc: PdfDoc, parent: StructElem, block: LaidOutImage): void 
   draw();
   doc.endMarkedContent();
   figure.add(content);
+}
+
+/** Draws an image where layout placed it; the caller marks it as content. */
+function drawImage(doc: PdfDoc, block: LaidOutImage): void {
+  const { x, y, width, height } = block.placement!;
+  doc.image(openImage(doc, block.source.src) as never, x, y, { width, height });
 }
 
 /**
@@ -270,9 +293,38 @@ function linkSpans(line: Line): LinkSpan[] {
   return spans;
 }
 
+/**
+ * Decoration or running content: one artifact marked-content sequence holding every frame, line,
+ * underline and image of the blocks, with no structure elements. Screen readers skip it.
+ */
+function paintArtifact(doc: PdfDoc, { type, blocks }: LaidOutArtifact): void {
+  doc.markContent('Artifact', { type });
+  const draw = (block: LaidOutBlock) => {
+    if (block.frame) drawFrame(doc, block.frame);
+    if ('children' in block) return block.children.forEach(draw);
+    // Inside an artifact an image is decoration whatever its alt: there is no Figure to carry it.
+    if (block.kind === 'Image') return drawImage(doc, block);
+    for (const line of block.lines) {
+      for (const { text, x, y, width, run, underline } of line.fragments) {
+        useFont(doc, run.style).fillColor(run.style.color);
+        doc.text(text, x, y, { lineBreak: false });
+        if (underline) doc.rect(x, underline.y, width, underline.thickness).fill(run.style.color);
+      }
+    }
+  };
+  blocks.forEach(draw);
+  doc.endMarkedContent();
+}
+
 /** Background and border are decoration: Layout artifacts, absent from the structure tree. */
-function paintFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom }: Frame): void {
+function paintFrame(doc: PdfDoc, frame: Frame): void {
   doc.markContent('Artifact', { type: 'Layout' });
+  drawFrame(doc, frame);
+  doc.endMarkedContent();
+}
+
+/** Draws a frame's background and border; the caller marks it as content. */
+function drawFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom }: Frame): void {
   doc.save();
   if (box.backgroundColor) doc.rect(x, y, width, height).fill(box.backgroundColor);
   const b = box.borderWidth;
@@ -292,7 +344,6 @@ function paintFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom
     doc.stroke(box.borderColor);
   }
   doc.restore();
-  doc.endMarkedContent();
 }
 
 export function toBuffer(doc: PdfDoc): Promise<Buffer> {

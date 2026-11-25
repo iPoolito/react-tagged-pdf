@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
 import {
+  Artifact,
   Document,
   Image,
   type ImageStyle,
@@ -182,6 +183,39 @@ describe('Image', () => {
         '        Figure [Alt="In an item"]',
       ].join('\n'),
     );
+  });
+
+  it('is part of the artifact inside <Artifact>, alt or not, and does not warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const pdf = await render(
+        <Artifact>
+          <Image src={PNG} alt="Logo" style={{ width: 30 }} />
+          <Image src={PNG} alt="" style={{ width: 30 }} />
+        </Artifact>,
+      );
+      expect(await structOutline(pdf)).toBe('Document');
+      expect((await paintedImages(pdf)).map((i) => i.tag)).toEqual(['Artifact', 'Artifact']);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('can be in a running header, as part of its Pagination artifact', async () => {
+    const pdf = await renderToBuffer(
+      <Document title="Images" lang="en-US">
+        <Page header={() => <Image src={PNG} decorative style={{ height: 20 }} />}>
+          <P>Body</P>
+        </Page>
+      </Document>,
+    );
+    expect(await structOutline(pdf)).toBe(['Document', '  P "Body"'].join('\n'));
+    const [image] = await paintedImages(pdf);
+    expect(image!.tag).toBe('Artifact');
+    expect(await pageContent(pdf)).toMatch(/\/Artifact <<\s*\/Type \/Pagination\s*>> BDC/);
+    // Top at half the top margin, inside the margin.
+    expect(image!.y + image!.height).toBeCloseTo(A4_HEIGHT - MARGIN / 2);
   });
 
   describe('alt text', () => {
