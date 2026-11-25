@@ -128,17 +128,14 @@ try {
 
 Every code is listed in the `ValidationCode` type.
 
-## Why not react-pdf?
+## How it works
 
-[react-pdf](https://github.com/diegomura/react-pdf) is great for visual PDFs, but it does not produce tagged
-PDF. It renders through its own fork of PDFKit with a box layout model (`View`/`Text`) that has no notion of a
-structure tree, and asking for tagging is a long-standing open request:
-[diegomura/react-pdf#1288](https://github.com/diegomura/react-pdf/issues/1288) (2021) and
-[diegomura/react-pdf#3179](https://github.com/diegomura/react-pdf/issues/3179) (2025).
-
-react-tagged-pdf starts from the other end: components are semantic (`H1`, `P`, `List`, `Table`, `Image`), each
-one maps to a PDF structure element, and it uses upstream [PDFKit](https://pdfkit.org)'s tagged-PDF support.
-Anything drawn that isn't content (borders, backgrounds, running headers) is marked as an artifact.
+A tagged PDF carries a structure tree alongside what's drawn on the page: it tells a screen reader that this
+text is a heading, that one is a list item, and this image is a figure with a description. react-tagged-pdf is
+built around that tree. Components are semantic (`H1`, `P`, `List`, `Table`, `Image`), each one maps to a PDF
+structure element, and rendering uses upstream [PDFKit](https://pdfkit.org)'s tagged-PDF support. Anything drawn
+that isn't content (borders, backgrounds, running headers) is marked as an artifact, so assistive technology
+skips it.
 
 ## What you're still responsible for
 
