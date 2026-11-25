@@ -1,20 +1,40 @@
 {
   "name": "react-tagged-pdf",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Render React components to tagged, accessible PDF (PDF/UA-1).",
+  "keywords": [
+    "react",
+    "pdf",
+    "tagged-pdf",
+    "pdf-ua",
+    "accessibility",
+    "a11y",
+    "pdfkit",
+    "verapdf"
+  ],
+  "homepage": "https://github.com/iPoolito/react-tagged-pdf#readme",
+  "bugs": {
+    "url": "https://github.com/iPoolito/react-tagged-pdf/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iPoolito/react-tagged-pdf.git"
+  },
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "fonts"
+    "fonts/*.ttf",
+    "fonts/OFL.txt"
   ],
   "engines": {
     "node": ">=20"
@@ -31,7 +51,8 @@
     "example:lists": "tsx examples/lists.tsx",
     "example:tables": "tsx examples/tables.tsx",
     "example:headers": "tsx examples/headers-footers.tsx",
-    "example:images": "tsx examples/images.tsx"
+    "example:images": "tsx examples/images.tsx",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "react": "~19.3.0"
