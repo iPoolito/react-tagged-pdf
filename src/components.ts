@@ -1,8 +1,8 @@
 import { createElement, type ReactNode } from 'react';
 import { HEADING_KINDS, type HeadingKind, type HeadingLevel } from './headings.js';
-import type { InlineStyle, Style } from './style.js';
+import type { ImageStyle, InlineStyle, Style } from './style.js';
 
-export type { InlineStyle };
+export type { ImageStyle, InlineStyle };
 
 const headingHostTypes = Object.fromEntries(HEADING_KINDS.map((kind) => [kind, `RTP_${kind}`])) as {
   [K in HeadingKind]: `RTP_${K}`;
@@ -19,6 +19,7 @@ export const HostType = {
   Link: 'RTP_LINK',
   List: 'RTP_LIST',
   ListItem: 'RTP_LIST_ITEM',
+  Image: 'RTP_IMAGE',
   ...headingHostTypes,
 } as const;
 export type HostType = (typeof HostType)[keyof typeof HostType];
@@ -69,6 +70,39 @@ export type ListProps = BlockProps & {
   ordered?: boolean;
 };
 export type ListItemProps = BlockProps;
+
+/** Where an image's bytes come from: a file path, or the file's contents. */
+export type ImageSource = string | Uint8Array;
+
+type ImageCommonProps = {
+  /** A JPEG or PNG file: its path, or its contents as a `Buffer`/`Uint8Array`. */
+  src: ImageSource;
+  /**
+   * Natural language of the `alt` text as a BCP 47 tag, e.g. `es-ES`, when it differs from the
+   * surrounding content's. Written as the Figure's `Lang`.
+   */
+  lang?: string;
+  /** Size (`width`, `height`) and box properties. Lengths are points. */
+  style?: ImageStyle;
+};
+
+/**
+ * Every image is either described or explicitly decorative, never neither: give exactly one of
+ * `alt` (what the image conveys, announced by screen readers) or `decorative`.
+ */
+export type ImageProps = ImageCommonProps &
+  (
+    | {
+        /** A text alternative: what the image conveys. Becomes the Figure's `Alt`. */
+        alt: string;
+        decorative?: never;
+      }
+    | {
+        /** The image adds no information: it becomes an artifact that assistive technology skips. */
+        decorative: true;
+        alt?: never;
+      }
+  );
 
 export type SpanProps = {
   /**
@@ -129,6 +163,19 @@ export function List(props: ListProps) {
  */
 export function ListItem(props: ListItemProps) {
   return createElement(HostType.ListItem, props);
+}
+
+/**
+ * A JPEG or PNG image, placed as a block wherever a block is allowed. With `alt` it is a `Figure`
+ * structure element whose `Alt` is the text alternative and whose `BBox` is where it is drawn;
+ * with `decorative` it is a Layout artifact, absent from the structure tree. Its size comes from
+ * `style.width` and `style.height` (with only one, the other keeps the aspect ratio), else from
+ * its pixels at one point per pixel, scaled down to fit the content width. It never splits
+ * across pages: one that does not fit the rest of the page moves to the next.
+ */
+export function Image(props: ImageProps) {
+  // createElement cannot take a union of props types; the host element only needs the props as given.
+  return createElement(HostType.Image, props as ImageCommonProps);
 }
 
 /**

@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import type { ReactNode } from 'react';
 import { layoutDocument } from './layout.js';
 import { buildDocumentModel } from './model.js';
-import { createPdfDocument, measurerFor, paint, toBuffer } from './pdf.js';
+import { createPdfDocument, imageSizer, measurerFor, paint, toBuffer } from './pdf.js';
 import { renderTree } from './reconciler.js';
 
 export type RenderOptions = {
@@ -15,7 +15,7 @@ export async function renderToBuffer(element: ReactNode, _options: RenderOptions
   const model = buildDocumentModel(renderTree(element));
   for (const warning of model.warnings) console.warn(`react-tagged-pdf: ${warning}`);
   const doc = createPdfDocument(model);
-  const pages = layoutDocument(model, measurerFor(doc));
+  const pages = layoutDocument(model, measurerFor(doc), imageSizer(doc));
   paint(doc, pages);
   return toBuffer(doc);
 }

@@ -179,7 +179,41 @@ export function parseInlineStyle(raw: unknown, owner: string): InlineStyle {
   return style;
 }
 
-const describeValue = (v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v) ?? String(v));
+const TEXT_KEYS = [...INLINE_KEYS, 'lineHeight'] as const;
+
+/**
+ * The `style` of an `<Image>`: its size and box properties (margin, padding, border, background).
+ * `width` and `height` are the image's own size in points, inside any padding and border.
+ */
+export type ImageStyle = Omit<Style, (typeof TEXT_KEYS)[number]> & {
+  /** Points. With only `width` or `height`, the other keeps the image's aspect ratio. Default: one point per pixel. */
+  width?: number;
+  height?: number;
+};
+
+/** Validate the `style` of an `<Image>`: size and box properties; text properties are refused. */
+export function parseImageStyle(raw: unknown, owner: string): ImageStyle {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`<${owner}> \`style\` must be an object.`);
+  const { width, height, ...rest } = raw as Record<string, unknown>;
+  for (const [key, value] of Object.entries({ width, height })) {
+    if (value !== undefined && !(isNumber(value) && value > 0)) {
+      throw new Error(`<${owner}> \`style.${key}\` must be a number of points greater than 0; got ${describeValue(value)}.`);
+    }
+  }
+  const box = parseStyle(rest, owner);
+  for (const key of TEXT_KEYS) {
+    if (box[key] !== undefined) {
+      throw new Error(
+        `<${owner}> \`style.${key}\` is not supported on images; they take width, height and box properties ` +
+          '(margin, padding, borderWidth, borderColor, backgroundColor).',
+      );
+    }
+  }
+  return raw as ImageStyle;
+}
+
+const describeValue =(v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v) ?? String(v));
 
 export function inheritText(parent: InheritedText, own: Style, kind?: StyledKind): InheritedText {
   const merged = { ...(kind ? ELEMENT_DEFAULTS[kind] : undefined), ...own };

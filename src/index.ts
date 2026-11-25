@@ -1,9 +1,12 @@
-export { Document, H1, H2, H3, H4, H5, H6, Link, List, ListItem, P, Page, PageBreak, Section, Span } from './components.js';
+export { Document, H1, H2, H3, H4, H5, H6, Image, Link, List, ListItem, P, Page, PageBreak, Section, Span } from './components.js';
 export type {
   BlockProps,
   CommonProps,
   DocumentProps,
   HeadingProps,
+  ImageProps,
+  ImageSource,
+  ImageStyle,
   InlineStyle,
   LinkProps,
   ListItemProps,
