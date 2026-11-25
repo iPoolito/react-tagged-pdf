@@ -234,7 +234,11 @@ export function parseImageStyle(raw: unknown, owner: string): ImageStyle {
       );
     }
   }
-  return raw as ImageStyle;
+  return {
+    ...box,
+    ...(width === undefined ? {} : { width: width as number }),
+    ...(height === undefined ? {} : { height: height as number }),
+  };
 }
 
 /** Validate the `style` of a table row: text properties only, which its cells inherit. */
@@ -259,10 +263,11 @@ const MARGIN_KEYS = ['margin', 'marginTop', 'marginRight', 'marginBottom', 'marg
  * which fixes the width of the cell's column.
  */
 export function parseCellStyle(raw: unknown, owner: 'TH' | 'TD'): Style & { width?: number } {
-  const { width, ...rest } = (raw ?? {}) as Record<string, unknown>;
-  if (raw !== undefined && raw !== null && (typeof raw !== 'object' || Array.isArray(raw))) {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
   }
+  const { width, ...rest } = raw as Record<string, unknown>;
   if (width !== undefined && !(isNumber(width) && width > 0)) {
     throw new ValidationError(
       'RTP_INVALID_STYLE',

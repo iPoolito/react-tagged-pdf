@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { Document, P, Page, renderToBuffer } from '../src/index.js';
+import { fileURLToPath } from 'node:url';
+import type { ReactNode } from 'react';
+import { Document, Image, P, Page, renderToBuffer, Table, TD, TH, TR } from '../src/index.js';
 
 const renderP = (style: unknown) =>
   renderToBuffer(
@@ -47,5 +49,36 @@ describe('style validation', () => {
   it('rejects unknown keys and names the element and the key', async () => {
     await expect(renderP({ colour: 'red' })).rejects.toThrow('<P> `style` has unknown key "colour".');
     await expect(renderP({ toString: 1 })).rejects.toThrow('<P> `style` has unknown key "toString".');
+  });
+});
+
+describe('style that is not an object', () => {
+  const PNG = fileURLToPath(new URL('./fixtures/images/chart.png', import.meta.url));
+  const elements: Record<string, (style: never) => ReactNode> = {
+    P: (style) => <P style={style}>x</P>,
+    Image: (style) => <Image src={PNG} alt="Chart" style={style} />,
+    TD: (style) => (
+      <Table>
+        <TR>
+          <TH>h</TH>
+        </TR>
+        <TR>
+          <TD style={style}>x</TD>
+        </TR>
+      </Table>
+    ),
+  };
+  const cases = Object.keys(elements).flatMap((name) => ['wide', 5, [{ width: 50 }]].map((style) => [name, style] as const));
+
+  it.each(cases)('rejects <%s style=%j>', async (name, style) => {
+    const run = renderToBuffer(
+      <Document title="Style" lang="en-US">
+        <Page>{elements[name]!(style as never)}</Page>
+      </Document>,
+    );
+    await expect(run).rejects.toMatchObject({
+      code: 'RTP_INVALID_STYLE',
+      message: expect.stringContaining(`<${name}> \`style\` must be an object.`),
+    });
   });
 });

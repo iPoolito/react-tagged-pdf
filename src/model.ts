@@ -505,9 +505,9 @@ function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
             `<TR> may only contain <TH> and <TD> children, found ${describe(cell)}.`,
           );
         }
-        const block = within(nameOf(cell), () => cellBlock(cell, rowText));
+        const { block, width } = within(nameOf(cell), () => cellBlock(cell, rowText));
         if (block.scope) explicitScope.add(block);
-        rowWidths.push(cellWidth(cell));
+        rowWidths.push(width);
         return block;
       });
       const lang = optionalLang(row);
@@ -547,7 +547,8 @@ function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
   return [{ kind: 'Table', children, columns, box: resolveBox(own, 'Table'), ...(lang ? { lang } : {}) }];
 }
 
-function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
+/** A table cell's text block, and the width of its column its `style.width` sets, if any. */
+function cellBlock(el: HostElement, inherited: InheritedText): { block: TextBlock; width?: number } {
   const kind: CellKind = el.type === HostType.TH ? 'TH' : 'TD';
   for (const prop of ['rowSpan', 'colSpan']) {
     const value = el.props[prop];
@@ -558,12 +559,12 @@ function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
       );
     }
   }
-  const { width: _width, ...own } = parseCellStyle(el.props.style, kind);
+  const { width, ...own } = parseCellStyle(el.props.style, kind);
   const text = inheritText(inherited, own, kind);
   const runs = mergeRuns(collectRuns(el, text));
   const lang = optionalLang(el);
   const scope = kind === 'TH' ? optionalScope(el) : undefined;
-  return {
+  const block: TextBlock = {
     kind,
     text: textOf(runs),
     runs,
@@ -572,6 +573,7 @@ function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
     ...(lang ? { lang } : {}),
     ...(scope ? { scope } : {}),
   };
+  return width === undefined ? { block } : { block, width };
 }
 
 function optionalScope(el: HostElement): Scope | undefined {
@@ -582,9 +584,6 @@ function optionalScope(el: HostElement): Scope | undefined {
     `<TH> \`scope\` must be 'Column' or 'Row'; got ${JSON.stringify(scope)}.`,
   );
 }
-
-const cellWidth = (el: HostElement): number | undefined =>
-  (el.props.style as { width?: number } | undefined)?.width;
 
 function runningContent(page: HostElement): { header?: RunningContent; footer?: RunningContent } {
   const out: { header?: RunningContent; footer?: RunningContent } = {};
