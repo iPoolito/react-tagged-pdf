@@ -1,19 +1,23 @@
 import { writeFile } from 'node:fs/promises';
 import type { ReactNode } from 'react';
+import { report } from './diagnostics.js';
 import { layoutDocument, layoutRunningContent } from './layout.js';
 import { buildDocumentModel, runningBlocks } from './model.js';
 import { createPdfDocument, imageSizer, measurerFor, paint, toBuffer } from './pdf.js';
 import { renderTree } from './reconciler.js';
 
 export type RenderOptions = {
-  /** Turn accessibility warnings into errors. Reserved; not implemented yet. */
+  /**
+   * Turn accessibility warnings into errors: rendering rejects with an `AccessibilityError`
+   * listing every problem instead of warning. Meant for CI.
+   */
   strict?: boolean;
 };
 
 /** Render a `<Document>` element to a tagged PDF/UA-1 PDF in memory. */
-export async function renderToBuffer(element: ReactNode, _options: RenderOptions = {}): Promise<Buffer> {
+export async function renderToBuffer(element: ReactNode, options: RenderOptions = {}): Promise<Buffer> {
   const model = buildDocumentModel(renderTree(element));
-  for (const warning of model.warnings) console.warn(`react-tagged-pdf: ${warning}`);
+  report(model.diagnostics, options.strict === true);
   const doc = createPdfDocument(model);
   const measure = measurerFor(doc);
   const imageSize = imageSizer(doc);
