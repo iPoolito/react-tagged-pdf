@@ -12,7 +12,7 @@ npm pkg set type=module
 echo '{ "compilerOptions": { "jsx": "react-jsx" } }' > tsconfig.json
 ```
 
-Requirements: Node.js 20 or later, React `~19.3.0` (peer dependency). The package is ESM only.
+Requirements: Node.js 20.19 or later, React `~19.3.0` (peer dependency). The package is ESM only.
 
 ## Render a PDF
 

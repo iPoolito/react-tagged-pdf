@@ -29,8 +29,8 @@ jobs:
 
   node20-smoke:
     # The dev toolchain needs a newer Node, so build and pack on 24, then install the tarball and
-    # render with plain JavaScript on Node 20.0.0, the engines floor.
-    name: Packed tarball on Node 20.0.0
+    # render with plain JavaScript on Node 20.19.0, the engines floor.
+    name: Packed tarball on Node 20.19.0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +42,7 @@ jobs:
       - run: npm pack
       - uses: actions/setup-node@v4
         with:
-          node-version: 20.0.0
+          node-version: 20.19.0
       - name: Install the tarball and render a document
         run: |
           mkdir "$RUNNER_TEMP/smoke"

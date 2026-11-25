@@ -158,7 +158,7 @@ Test with a screen reader and, where it matters, have people with disabilities r
 
 ## Requirements
 
-- Node.js 20 or later (CI runs on Node 22 and 24).
+- Node.js 20.19 or later (CI runs the tests on Node 22 and 24, and a packed-tarball smoke test on Node 20.19).
 - React `~19.3.0` (peer dependency; `react-reconciler` is pinned to the matching release).
 - ESM only.
 
