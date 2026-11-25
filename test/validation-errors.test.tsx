@@ -505,3 +505,15 @@ describe('invalid input throws a ValidationError with a stable code', () => {
     if (path) expect(error.message).toContain(`(at ${path})`);
   });
 });
+
+it('ValidationError code and path are read-only', async () => {
+  const error = await thrown(cases['an image wider than its content width']!.run);
+  const assign = () => {
+    // @ts-expect-error path is read-only
+    error.path = 'elsewhere';
+  };
+  expect(assign).toThrow(TypeError);
+  expect(error.path).toBe('Document > Page[2]');
+  // @ts-expect-error code is read-only
+  const _assignCode = () => (error.code = 'RTP_LINE_TOO_TALL');
+});

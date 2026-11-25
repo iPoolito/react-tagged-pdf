@@ -152,6 +152,9 @@ export type ValidationCode =
   | 'RTP_FONT_NOT_EMBEDDED'
   | 'RTP_STATE_UPDATE';
 
+/** Put `segment` in front of a validation error's path: the error happened inside that component. */
+let prependPath: (error: ValidationError, segment: string) => void;
+
 /**
  * Thrown for input that cannot be rendered, by `renderToBuffer`/`renderToFile` and `Font.register`,
  * strict mode or not. `path` is the component it is about, from the root (e.g.
@@ -159,7 +162,7 @@ export type ValidationCode =
  */
 export class ValidationError extends Error {
   readonly code: ValidationCode;
-  path?: string;
+  readonly path?: string;
   /** The message without the path. */
   readonly #problem: string;
 
@@ -170,10 +173,13 @@ export class ValidationError extends Error {
     this.#problem = message;
   }
 
-  /** Put `segment` in front of the path: the error happened inside that component. */
-  prependPath(segment: string): void {
-    this.path = this.path ? `${segment} > ${this.path}` : segment;
-    this.message = `${this.#problem} (at ${this.path})`;
+  static {
+    prependPath = (error, segment) => {
+      const path = error.path ? `${segment} > ${error.path}` : segment;
+      // `path` is read-only to callers; only `within` sets it, as the error travels up the tree.
+      Object.defineProperty(error, 'path', { value: path, enumerable: true, configurable: true, writable: false });
+      error.message = `${error.#problem} (at ${path})`;
+    };
   }
 }
 
@@ -185,7 +191,7 @@ export function within<T>(segment: string, fn: () => T): T {
   try {
     return fn();
   } catch (error) {
-    if (error instanceof ValidationError) error.prependPath(segment);
+    if (error instanceof ValidationError) prependPath(error, segment);
     throw error;
   }
 }
