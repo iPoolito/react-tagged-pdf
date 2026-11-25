@@ -153,8 +153,8 @@ export type TDProps = CommonProps & {
 export type THProps = TDProps & {
   /**
    * Which cells this header describes: `'Column'` (the cells below it) or `'Row'` (the cells to
-   * its right). Default: `'Column'` when its whole row is header cells, `'Row'` when it is the
-   * first cell of a row that has data cells, `'Column'` otherwise.
+   * its right). Default: `'Column'` when its whole row is header cells, `'Row'` when its row has
+   * data cells (whatever its column).
    */
   scope?: 'Column' | 'Row';
 };

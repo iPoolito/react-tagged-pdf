@@ -124,7 +124,7 @@ A simple data table: `Table` > `TR` > `TH`/`TD`, the same number of cells in eve
 
 | Prop | On | Type | |
 |---|---|---|---|
-| `scope` | `TH` | `'Column' \| 'Row'` | What the header describes. Default: `Column` when the whole row is header cells, `Row` when it is the first cell of a row with data cells, `Column` otherwise. |
+| `scope` | `TH` | `'Column' \| 'Row'` | What the header describes. Default: `Column` when the whole row is header cells, `Row` when its row has data cells (whatever its column). |
 | `style.width` | `TH`, `TD` | `number` | Fixes the width of the cell's column; other columns share the rest equally. |
 | `style` | `TR` | text style | Text properties its cells inherit. |
 | `rowSpan`, `colSpan` | `TH`, `TD` | `number` | Not supported yet: throws. |

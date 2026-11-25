@@ -477,7 +477,7 @@ function listItemBlock(el: HostElement, inherited: InheritedText, depth: ListDep
 
 /**
  * A `<Table>`: a `Table` of `TR`s of `TH`/`TD` cells, one cell per row and column. Header cells
- * get a `Scope`; column widths come from the cells' `style.width`. An empty table adds nothing.
+ * get a `Scope` (`Column` in a row of header cells, `Row` in a row with data cells, unless set); column widths come from the cells' `style.width`. An empty table adds nothing.
  */
 function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
   const own = parseStyle(el.props.style, 'Table');
@@ -526,13 +526,11 @@ function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
       );
     }
   });
-  grid.forEach((cells) =>
-    cells.forEach((cell, column) => {
-      if (cell.kind !== 'TH' || explicitScope.has(cell)) return;
-      const headerRow = cells.every((c) => c.kind === 'TH');
-      cell.scope = !headerRow && column === 0 ? 'Row' : 'Column';
-    }),
-  );
+  // A header cell describes its column in a row of header cells, and its row in a row with data cells.
+  grid.forEach((cells) => {
+    const scope: Scope = cells.every((c) => c.kind === 'TH') ? 'Column' : 'Row';
+    for (const cell of cells) if (cell.kind === 'TH' && !explicitScope.has(cell)) cell.scope = scope;
+  });
 
   const columns = Array.from({ length: columnCount }, (_, column) => {
     const set = widths.map((row) => row[column]).filter((w) => w !== undefined);

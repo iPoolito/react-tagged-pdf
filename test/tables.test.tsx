@@ -86,6 +86,31 @@ describe('Table', () => {
     ]);
   });
 
+  it('a header cell in a row with data cells is scoped to its row, whatever its column', async () => {
+    const pdf = await render(
+      <Table>
+        <TR>
+          <TD>1</TD>
+          <TH>Apples</TH>
+          <TD>1.20</TD>
+        </TR>
+      </Table>,
+    );
+    expect(await structOutline(pdf)).toContain('TH [Scope=Row] "Apples"');
+  });
+
+  it('an explicit scope overrides the default in a row with data cells', async () => {
+    const pdf = await render(
+      <Table>
+        <TR>
+          <TD>1</TD>
+          <TH scope="Column">Apples</TH>
+        </TR>
+      </Table>,
+    );
+    expect(await structOutline(pdf)).toContain('TH [Scope=Column] "Apples"');
+  });
+
   it('an explicit scope overrides the default', async () => {
     const pdf = await render(
       <Table>

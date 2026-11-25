@@ -35,14 +35,14 @@ The structure tree follows the order of your JSX. That is the order a screen rea
 
 ## Table scope correctness
 
-`<TH>` cells get a `Scope` automatically: `Column` when the whole row is header cells, `Row` when the `TH` is the
-first cell of a row that has data cells. That guess is right for simple tables, but only you know what each
+`<TH>` cells get a `Scope` automatically: `Column` when the whole row is header cells, `Row` when the `TH` is in
+a row that has data cells, whatever its column. That guess is right for simple tables, but only you know what each
 header describes.
 
 - Use `<TH>` for every header cell and `<TD>` for data. A table without any `<TH>` is reported as
   `RTP_TABLE_NO_TH`.
-- Set `scope` explicitly when the guess is wrong, for example a row header that is not the first cell of its
-  row (after a row-number `<TD>`), which would otherwise get `Column`.
+- Set `scope` explicitly when the guess is wrong, for example a column header that sits in a row with data
+  cells, which would otherwise get `Row`.
 - Prefer several simple tables over one complex one. Merged cells (`rowSpan`, `colSpan`) are not supported yet.
 - Don't use tables for layout.
 - Header rows are not repeated when a long table continues on the next page yet.
