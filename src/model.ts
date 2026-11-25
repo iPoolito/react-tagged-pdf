@@ -1,6 +1,6 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
-import { type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
+import { ARTIFACT_TYPES, type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
 import { type Diagnostic, round2, type ValidationCode, ValidationError, within } from './diagnostics.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
@@ -652,14 +652,13 @@ function rejectLinks(blocks: Block[], owner: string, why: string): void {
   blocks.forEach(check);
 }
 
-const ARTIFACT_TYPES: readonly ArtifactType[] = ['Layout', 'Page', 'Pagination'];
-
 function artifactType(el: HostElement): ArtifactType {
   const { type = 'Layout' } = el.props;
-  if (!ARTIFACT_TYPES.includes(type as ArtifactType)) {
+  if (!(ARTIFACT_TYPES as readonly unknown[]).includes(type)) {
+    const quoted = ARTIFACT_TYPES.map((t) => `'${t}'`);
     throw new ValidationError(
       'RTP_INVALID_PROP',
-      `<Artifact> \`type\` must be 'Layout', 'Page' or 'Pagination'; got ${JSON.stringify(type)}.`,
+      `<Artifact> \`type\` must be ${quoted.slice(0, -1).join(', ')} or ${quoted.at(-1)}; got ${JSON.stringify(type)}.`,
     );
   }
   return type as ArtifactType;

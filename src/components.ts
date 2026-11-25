@@ -159,8 +159,10 @@ export type THProps = TDProps & {
   scope?: 'Column' | 'Row';
 };
 
+/** Every artifact `/Type`, the source of `ArtifactType`. */
+export const ARTIFACT_TYPES = ['Layout', 'Page', 'Pagination'] as const;
 /** The `/Type` of an artifact: what kind of decoration it is. */
-export type ArtifactType = 'Layout' | 'Page' | 'Pagination';
+export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 export type ArtifactProps = {
   /**
