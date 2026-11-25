@@ -14,7 +14,11 @@ export type RenderOptions = {
   strict?: boolean;
 };
 
-/** Render a `<Document>` element to a tagged PDF/UA-1 PDF in memory. */
+/**
+ * Render a `<Document>` element to a tagged PDF/UA-1 PDF in memory. Rejects with a
+ * `ValidationError` (with a stable `code` and, where known, the component `path`) for input that
+ * cannot be rendered, strict mode or not.
+ */
 export async function renderToBuffer(element: ReactNode, options: RenderOptions = {}): Promise<Buffer> {
   const model = buildDocumentModel(renderTree(element));
   report(model.diagnostics, options.strict === true);
@@ -30,7 +34,7 @@ export async function renderToBuffer(element: ReactNode, options: RenderOptions 
   return toBuffer(doc);
 }
 
-/** Render a `<Document>` element and write the PDF to `path`. */
+/** Render a `<Document>` element and write the PDF to `path`. Rejects like `renderToBuffer`. */
 export async function renderToFile(element: ReactNode, path: string, options: RenderOptions = {}): Promise<void> {
   await writeFile(path, await renderToBuffer(element, options));
 }

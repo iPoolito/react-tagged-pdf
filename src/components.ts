@@ -79,13 +79,13 @@ export type PageProps = CommonProps & {
   /**
    * Running header, drawn in the top margin of every physical page: its top half a top margin
    * below the page edge. A pagination artifact: screen readers skip it and it is not in the
-   * structure tree. It must fit in the top margin.
+   * structure tree. It must fit in half the top margin, else it throws `RTP_RUNNING_CONTENT_TOO_TALL`.
    */
   header?: RunningContent;
   /**
    * Running footer, drawn in the bottom margin of every physical page: its bottom half a bottom
    * margin above the page edge. A pagination artifact: screen readers skip it and it is not in
-   * the structure tree. It must fit in the bottom margin.
+   * the structure tree. It must fit in half the bottom margin, else it throws `RTP_RUNNING_CONTENT_TOO_TALL`.
    */
   footer?: RunningContent;
 };
@@ -253,10 +253,13 @@ export function Image(props: ImageProps) {
 /**
  * A simple data table: rows of header (`<TH>`) and data (`<TD>`) cells, one cell per row and
  * column. Its only children are `<TR>`s, all with the same number of cells. Columns share the
- * table's width equally unless a cell's `style.width` fixes its column's width. A table must fit
- * on one page (it moves to the next page whole when it does not fit on the current one). Maps to
- * the `Table` structure element. Warns when it has no `<TH>`: screen readers need header cells
- * to announce which row and column a cell belongs to.
+ * table's width equally unless a cell's `style.width` fixes its column's width. A long table
+ * breaks between rows and continues on the next page; a row is never split, and one taller than
+ * a page's content area throws `RTP_TABLE_ROW_TOO_TALL`. The first row is kept with the second,
+ * so a header row is never left alone at the bottom of a page. Header rows are not repeated on
+ * the following pages yet. Maps to one `Table` structure element however many pages it spans.
+ * Reports `RTP_TABLE_NO_TH` when it has no `<TH>` (a warning, an error in strict mode): screen
+ * readers need header cells to announce which row and column a cell belongs to.
  */
 export function Table(props: TableProps) {
   return createElement(HostType.Table, props);

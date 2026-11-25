@@ -49,7 +49,7 @@ A page template. Its content flows onto as many physical pages as it needs; each
 | `footer` | `({ pageNumber, totalPages }) => ReactNode` | Running footer in the bottom margin, drawn as a pagination artifact. |
 
 Headers and footers are laid out after the content, so `totalPages` is final. They can't contain `<Link>` and
-must fit in their margin. Screen readers skip them.
+must fit in half their margin (else `RTP_RUNNING_CONTENT_TOO_TALL`). Screen readers skip them.
 
 ## PageBreak
 
@@ -130,7 +130,9 @@ A simple data table: `Table` > `TR` > `TH`/`TD`, the same number of cells in eve
 | `rowSpan`, `colSpan` | `TH`, `TD` | `number` | Not supported yet: throws. |
 
 `TH` is bold by default. A table without `TH` cells renders but is reported as `RTP_TABLE_NO_TH`. A long table
-breaks between rows across pages and stays one `Table`; header rows are not repeated on the following pages yet.
+breaks between rows across pages and stays one `Table`: a row is never split (one taller than a page throws
+`RTP_TABLE_ROW_TOO_TALL`), and the first row is kept with the second so a header row is never left alone at the
+bottom of a page. Header rows are not repeated on the following pages yet.
 
 ## Artifact
 
