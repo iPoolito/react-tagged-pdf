@@ -27,6 +27,32 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  node20-smoke:
+    # The dev toolchain needs a newer Node, so build and pack on 24, then install the tarball and
+    # render with plain JavaScript on Node 20.0.0, the engines floor.
+    name: Packed tarball on Node 20.0.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.0.0
+      - name: Install the tarball and render a document
+        run: |
+          mkdir "$RUNNER_TEMP/smoke"
+          cp scripts/smoke.mjs "$RUNNER_TEMP/smoke/"
+          cd "$RUNNER_TEMP/smoke"
+          node --version
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/react-tagged-pdf-*.tgz react@~19.3.0
+          node smoke.mjs
+
   verapdf:
     name: veraPDF PDF/UA-1
     runs-on: ubuntu-latest
