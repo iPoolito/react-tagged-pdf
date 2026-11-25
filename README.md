@@ -97,12 +97,18 @@ npm run test:ua
 | `Link` | `Link` | `http`, `https`, `mailto`, `tel`. Underlined by default. |
 | `List`, `ListItem` | `L` > `LI` > `Lbl` + `LBody` | `ordered` for numbers. Nested lists work. |
 | `Image` | `Figure` | `alt`, or `decorative` to leave it out of the tree. PNG and JPEG. |
-| `Table`, `TR`, `TH`, `TD` | `Table` > `TR` > `TH`/`TD` | `TH` gets a `Scope` (Column or Row) automatically, or set `scope`. |
+| `Table`, `TR`, `TH`, `TD` | `Table` > `TR` > `TH`/`TD` | `TH` gets a `Scope` (Column or Row) automatically, or set `scope`. Long tables break between rows across pages (header rows are not repeated yet). |
 | `Artifact` | | Decorative content that screen readers skip. |
 
 Text uses the bundled **Noto Sans** (Latin, Greek, Cyrillic). For other scripts, register a TTF/OTF font with
 `Font.register({ family, src, weight, style })` and set `style.fontFamily`. Fonts are always embedded, as
 PDF/UA-1 requires.
+
+### Warnings and strict mode
+
+Problems the library can detect, such as a skipped heading level, a table without `TH` cells or an image with
+an empty `alt`, are printed as warnings with a stable code and the component's path. Pass `{ strict: true }`
+to `renderToBuffer`/`renderToFile` to reject with an `AccessibilityError` instead, which is useful in CI.
 
 ## Why not react-pdf?
 
