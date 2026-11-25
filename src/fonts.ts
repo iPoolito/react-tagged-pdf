@@ -3,6 +3,7 @@
 // standard-14 fonts PDFKit would otherwise fall back to are rejected here.
 import { constants, accessSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { ValidationError } from './diagnostics.js';
 
 export type FontWeight = 'normal' | 'bold' | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900;
 export type FontStyle = 'normal' | 'italic';
@@ -32,10 +33,13 @@ export const weightNumber = (w: FontWeight | undefined): number =>
 
 function register({ family, src, weight, style = 'normal' }: FontSource): void {
   if (typeof family !== 'string' || family.trim() === '') {
-    throw new Error('Font.register requires a non-empty `family`.');
+    throw new ValidationError('RTP_FONT_NO_FAMILY', 'Font.register requires a non-empty `family`.');
   }
   if (typeof src !== 'string' && !(src instanceof Uint8Array)) {
-    throw new Error(`Font.register({ family: ${JSON.stringify(family)} }) requires \`src\`: a file path or the font bytes.`);
+    throw new ValidationError(
+      'RTP_FONT_NO_SRC',
+      `Font.register({ family: ${JSON.stringify(family)} }) requires \`src\`: a file path or the font bytes.`,
+    );
   }
   if (typeof src === 'string') assertReadableFile(family, src);
   const key = family.trim().toLowerCase();
@@ -51,7 +55,8 @@ function assertReadableFile(family: string, path: string): void {
     if (!statSync(path).isFile()) throw new Error('not a file');
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(
+    throw new ValidationError(
+      'RTP_FONT_UNREADABLE',
       `Font.register({ family: ${JSON.stringify(family)} }) cannot read \`src\` ${JSON.stringify(path)}: ${reason}. ` +
         'Pass the path to a readable TTF/OTF file, or the font bytes.',
       { cause },
@@ -69,12 +74,16 @@ export function resolveFont(family: string, weight: number, style: FontStyle): F
   const faces = families.get(family.trim().toLowerCase());
   if (!faces) {
     if (STANDARD_14.test(family.trim())) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_FONT_NOT_EMBEDDED',
         `"${family}" is a PDF standard-14 font, which is not embedded; PDF/UA requires every font to be embedded. ` +
           `Register a TTF/OTF file with Font.register({ family: "${family}", src }) or use the bundled "${DEFAULT_FONT_FAMILY}".`,
       );
     }
-    throw new Error(`Font family "${family}" is not registered. Register it with Font.register({ family: "${family}", src }).`);
+    throw new ValidationError(
+      'RTP_FONT_NOT_REGISTERED',
+      `Font family "${family}" is not registered. Register it with Font.register({ family: "${family}", src }).`,
+    );
   }
   const sameStyle = faces.filter((f) => f.style === style);
   const candidates = sameStyle.length > 0 ? sameStyle : faces;

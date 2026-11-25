@@ -31,8 +31,8 @@ export type {
 } from './components.js';
 export { renderToBuffer, renderToFile } from './render.js';
 export type { RenderOptions } from './render.js';
-export { AccessibilityError } from './diagnostics.js';
-export type { Diagnostic, DiagnosticCode } from './diagnostics.js';
+export { AccessibilityError, ValidationError } from './diagnostics.js';
+export type { Diagnostic, DiagnosticCode, ValidationCode } from './diagnostics.js';
 export { Font } from './fonts.js';
 export type { FontSource, FontStyle, FontWeight } from './fonts.js';
 export type { Style, TextDecoration } from './style.js';

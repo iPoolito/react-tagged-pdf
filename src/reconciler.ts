@@ -3,6 +3,7 @@
 import { createContext, type ReactNode } from 'react';
 import Reconciler from 'react-reconciler';
 import { DefaultEventPriority, LegacyRoot, NoEventPriority } from 'react-reconciler/constants.js';
+import { ValidationError } from './diagnostics.js';
 
 export type HostElement = {
   kind: 'element';
@@ -15,7 +16,10 @@ export type HostNode = HostElement | HostText;
 type Container = { children: HostNode[] };
 
 const updatesNotSupported = () => {
-  throw new Error('react-tagged-pdf renders once; state updates after the first render are not supported.');
+  throw new ValidationError(
+    'RTP_STATE_UPDATE',
+    'react-tagged-pdf renders once; state updates after the first render are not supported.',
+  );
 };
 
 let currentUpdatePriority: number = NoEventPriority;

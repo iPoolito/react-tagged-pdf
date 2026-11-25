@@ -1,4 +1,5 @@
 // The `style` prop. Text properties inherit down the tree like CSS; all lengths are points.
+import { ValidationError } from './diagnostics.js';
 import { DEFAULT_FONT_FAMILY, type FontFace, type FontStyle, type FontWeight, resolveFont, weightNumber } from './fonts.js';
 import { HEADING_FONT_SIZE, HEADING_KINDS, type HeadingKind } from './headings.js';
 import { isPdfColor } from './pdf.js';
@@ -147,17 +148,25 @@ const STYLE_CHECKS: Record<keyof Style, Check> = {
 /** Validate a raw `style` prop. `owner` names the component in error messages. */
 export function parseStyle(raw: unknown, owner: string): Style {
   if (raw === undefined || raw === null) return {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`<${owner}> \`style\` must be an object.`);
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
+  }
   for (const [key, value] of Object.entries(raw)) {
     if (value === undefined) continue;
     const check = Object.hasOwn(STYLE_CHECKS, key) ? STYLE_CHECKS[key as keyof Style] : undefined;
     if (!check) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_UNKNOWN_STYLE_KEY',
         `<${owner}> \`style\` has unknown key ${JSON.stringify(key)}. Supported keys: ${Object.keys(STYLE_CHECKS).join(', ')}.`,
       );
     }
     const problem = check(value);
-    if (problem) throw new Error(`<${owner}> \`style.${key}\` ${problem}; got ${describeValue(value)}.`);
+    if (problem) {
+      throw new ValidationError(
+        'RTP_INVALID_STYLE',
+        `<${owner}> \`style.${key}\` ${problem}; got ${describeValue(value)}.`,
+      );
+    }
   }
   return raw as Style;
 }
@@ -175,7 +184,8 @@ export function parseInlineStyle(raw: unknown, owner: string): InlineStyle {
   const style = parseStyle(raw, owner);
   for (const key of Object.keys(style)) {
     if (style[key as keyof Style] !== undefined && !(INLINE_KEYS as readonly string[]).includes(key)) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_STYLE_NOT_SUPPORTED',
         `<${owner}> \`style.${key}\` is not supported on inline elements; use it on the enclosing block. ` +
           `Inline styles support ${INLINE_KEYS.join(', ')}.`,
       );
@@ -199,17 +209,23 @@ export type ImageStyle = Omit<Style, (typeof TEXT_KEYS)[number]> & {
 /** Validate the `style` of an `<Image>`: size and box properties; text properties are refused. */
 export function parseImageStyle(raw: unknown, owner: string): ImageStyle {
   if (raw === undefined || raw === null) return {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`<${owner}> \`style\` must be an object.`);
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
+  }
   const { width, height, ...rest } = raw as Record<string, unknown>;
   for (const [key, value] of Object.entries({ width, height })) {
     if (value !== undefined && !(isNumber(value) && value > 0)) {
-      throw new Error(`<${owner}> \`style.${key}\` must be a number of points greater than 0; got ${describeValue(value)}.`);
+      throw new ValidationError(
+        'RTP_INVALID_STYLE',
+        `<${owner}> \`style.${key}\` must be a number of points greater than 0; got ${describeValue(value)}.`,
+      );
     }
   }
   const box = parseStyle(rest, owner);
   for (const key of TEXT_KEYS) {
     if (box[key] !== undefined) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_STYLE_NOT_SUPPORTED',
         `<${owner}> \`style.${key}\` is not supported on images; they take width, height and box properties ` +
           '(margin, padding, borderWidth, borderColor, backgroundColor).',
       );
@@ -223,7 +239,8 @@ export function parseRowStyle(raw: unknown): Style {
   const style = parseStyle(raw, 'TR');
   for (const key of Object.keys(style)) {
     if (style[key as keyof Style] !== undefined && !(TEXT_KEYS as readonly string[]).includes(key)) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_STYLE_NOT_SUPPORTED',
         `<TR> \`style.${key}\` is not supported on table rows; set it on the <TH>/<TD> cells or the <Table>. ` +
           `Row styles support ${TEXT_KEYS.join(', ')}.`,
       );
@@ -241,15 +258,21 @@ const MARGIN_KEYS = ['margin', 'marginTop', 'marginRight', 'marginBottom', 'marg
 export function parseCellStyle(raw: unknown, owner: 'TH' | 'TD'): Style & { width?: number } {
   const { width, ...rest } = (raw ?? {}) as Record<string, unknown>;
   if (raw !== undefined && raw !== null && (typeof raw !== 'object' || Array.isArray(raw))) {
-    throw new Error(`<${owner}> \`style\` must be an object.`);
+    throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
   }
   if (width !== undefined && !(isNumber(width) && width > 0)) {
-    throw new Error(`<${owner}> \`style.width\` must be a number of points greater than 0; got ${describeValue(width)}.`);
+    throw new ValidationError(
+      'RTP_INVALID_STYLE',
+      `<${owner}> \`style.width\` must be a number of points greater than 0; got ${describeValue(width)}.`,
+    );
   }
   const style = parseStyle(rest, owner);
   const margin = MARGIN_KEYS.find((key) => style[key as keyof Style] !== undefined);
   if (margin) {
-    throw new Error(`<${owner}> \`style.${margin}\` is not supported on table cells; use padding, or a margin on the <Table>.`);
+    throw new ValidationError(
+      'RTP_STYLE_NOT_SUPPORTED',
+      `<${owner}> \`style.${margin}\` is not supported on table cells; use padding, or a margin on the <Table>.`,
+    );
   }
   return width === undefined ? style : { ...style, width };
 }

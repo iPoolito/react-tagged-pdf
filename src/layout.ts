@@ -2,6 +2,7 @@
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
 import type { ArtifactType, PageInfo, RunningContent } from './components.js';
+import { ValidationError, within } from './diagnostics.js';
 import {
   type Block,
   type ContainerBlock,
@@ -12,6 +13,7 @@ import {
   mergeAdjacent,
   type PageGeometry,
   type PageModel,
+  pageSegment,
   type RunningPlace,
   type TextBlock,
   type TextKind,
@@ -157,7 +159,11 @@ type OpenBox = {
  */
 export function layoutDocument(model: DocumentModel, measureFor: Measure, imageSize: ImageSize): LaidOutPage[] {
   const pages: LaidOutPage[] = [];
-  for (const template of model.pages) layoutTemplate(template, template.geometry, template.blocks, measureFor, imageSize, pages);
+  model.pages.forEach((template, index) =>
+    within(`Document > ${pageSegment(index)}`, () =>
+      layoutTemplate(template, template.geometry, template.blocks, measureFor, imageSize, pages),
+    ),
+  );
   return pages;
 }
 
@@ -176,14 +182,19 @@ export function layoutRunningContent(
   imageSize: ImageSize,
   blocksFor: RunningBlocks,
 ): void {
+  // Every template lays out onto at least one physical page, so this lists them in document order.
+  const templates = [...new Set(pages.map((page) => page.template))];
   pages.forEach((page, index) => {
     const info: PageInfo = { pageNumber: index + 1, totalPages: pages.length };
     const { width, height, margin } = page.geometry;
+    const segment = `Document > ${pageSegment(templates.indexOf(page.template))}`;
     for (const place of ['header', 'footer'] as const) {
       const content = page.template[place];
-      if (!content) continue;
+      if (content) within(`${segment} > ${place}`, () => layoutBand(place, content));
+    }
+    function layoutBand(place: RunningPlace, content: RunningContent): void {
       const blocks = blocksFor(content, info, place);
-      if (blocks.length === 0) continue;
+      if (blocks.length === 0) return;
       /** The band's blocks laid out from `top` with no page breaks. */
       const band = (top: number) => {
         const out: LaidOutPage[] = [];
@@ -207,7 +218,8 @@ export function layoutRunningContent(
 }
 
 const tooTall = (place: RunningPlace, needed: number, room: number, info: PageInfo) =>
-  new Error(
+  new ValidationError(
+    'RTP_RUNNING_CONTENT_TOO_TALL',
     `<Page> ${place} on page ${info.pageNumber} is ${Number(needed.toFixed(2))} pt tall but only ` +
       `${Number(room.toFixed(2))} pt fit (half the ${place === 'header' ? 'top' : 'bottom'} margin); ` +
       `make the ${place} smaller or the margin larger.`,
@@ -364,7 +376,8 @@ function layoutTemplate(
     const innerX = outerX + borderWidth + padding.left;
     const innerWidth = outerWidth - 2 * borderWidth - padding.left - padding.right;
     if (!(innerWidth > 0)) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_NO_CONTENT_WIDTH',
         `<${elementName(block)}> has no room for content: margin, border and padding leave a content width of ` +
           `${Number(innerWidth.toFixed(2))} pt.`,
       );
@@ -408,7 +421,8 @@ function layoutTemplate(
         newPage();
         if (y + lineBox.height > bottom + EPSILON) {
           const label = JSON.stringify(block.text.trim().slice(0, 40));
-          throw new Error(
+          throw new ValidationError(
+            'RTP_LINE_TOO_TALL',
             `<${elementName(block)}> ${label} has a ${Number(lineBox.height.toFixed(2))} pt line that does not fit ` +
               `in the page content area (${Number((bottom - y).toFixed(2))} pt left below its border and padding).`,
           );
@@ -441,7 +455,8 @@ function layoutTemplate(
     const flexible = columns.filter((w) => w === undefined).length;
     const share = flexible > 0 ? (box.innerWidth - fixed) / flexible : 0;
     if (fixed > box.innerWidth + EPSILON || (flexible > 0 && !(share > 0))) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_TABLE_TOO_WIDE',
         `<Table> column widths add up to ${round(fixed)} pt, which leaves no room in its ${round(box.innerWidth)} pt ` +
           `content width${flexible > 0 ? ` for the ${flexible} column(s) without a width` : ''}.`,
       );
@@ -453,7 +468,8 @@ function layoutTemplate(
         const { borderWidth, padding } = cell.box;
         const innerWidth = widths[column]! - 2 * borderWidth - padding.left - padding.right;
         if (!(innerWidth > 0)) {
-          throw new Error(
+          throw new ValidationError(
+            'RTP_NO_CONTENT_WIDTH',
             `<${cell.kind}> has no room for content: its column is ${round(widths[column]!)} pt wide and its border ` +
               `and padding leave a content width of ${round(innerWidth)} pt.`,
           );
@@ -474,7 +490,8 @@ function layoutTemplate(
       const keep = index === 0 && rows.length > 1 ? need(0) + need(1) : need(index);
       if (y + keep > bottom + EPSILON && hasContent) newPage();
       if (y + need(index) > bottom + EPSILON) {
-        throw new Error(
+        throw new ValidationError(
+          'RTP_TABLE_ROW_TOO_TALL',
           `<TR> ${index + 1} of the <Table> starting ${JSON.stringify(first.slice(0, 40))} is ${round(rowHeight)} pt ` +
             `tall and does not fit on one page (${round(bottom - y)} pt available); a table row is never split across pages.`,
         );
@@ -532,7 +549,8 @@ function layoutTemplate(
     const { width, height } = imageExtent(block, imageSize, box.innerWidth);
     const describe = () => imageLabel(block.src);
     if (width > box.innerWidth + EPSILON) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_IMAGE_TOO_WIDE',
         `${describe()} is ${Number(width.toFixed(2))} pt wide, wider than the ${Number(box.innerWidth.toFixed(2))} pt ` +
           'of content width it is in; give it a smaller style.width.',
       );
@@ -540,7 +558,8 @@ function layoutTemplate(
     if (y + height > bottom + EPSILON) {
       newPage();
       if (y + height > bottom + EPSILON) {
-        throw new Error(
+        throw new ValidationError(
+          'RTP_IMAGE_TOO_TALL',
           `${describe()} is ${Number(height.toFixed(2))} pt tall and does not fit in the page content area ` +
             `(${Number((bottom - y).toFixed(2))} pt below its border and padding); give it a smaller style.height.`,
         );

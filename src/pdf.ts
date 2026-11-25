@@ -1,6 +1,7 @@
 // Paint pass on upstream PDFKit. Everything PDF/UA-1 needs at the document
 // level is configured in createPdfDocument(); keep the workarounds there.
 import PDFDocument from 'pdfkit';
+import { ValidationError } from './diagnostics.js';
 import { DEFAULT_FONT_PATH } from './fonts.js';
 import type { ImageSource } from './components.js';
 import type {
@@ -111,7 +112,11 @@ function openImage(doc: PdfDoc, src: ImageSource): OpenedImage {
       // @types/pdfkit (0.17) lacks openImage.
       image = (doc as unknown as { openImage(src: string | Buffer): OpenedImage }).openImage(input);
     } catch (error) {
-      throw new Error(`${imageLabel(src)} could not be read as a JPEG or PNG: ${(error as Error).message}`, { cause: error });
+      throw new ValidationError(
+        'RTP_IMAGE_UNREADABLE',
+        `${imageLabel(src)} could not be read as a JPEG or PNG: ${(error as Error).message}`,
+        { cause: error },
+      );
     }
     cache.set(src, image);
   }

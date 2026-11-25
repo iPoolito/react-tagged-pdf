@@ -1,7 +1,7 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
 import { type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
-import type { Diagnostic } from './diagnostics.js';
+import { type Diagnostic, type ValidationCode, ValidationError, within } from './diagnostics.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
@@ -128,10 +128,10 @@ const nameOf = (node: HostNode) => (node.kind === 'text' ? 'text' : (componentNa
 
 const isBlank = (node: HostNode) => node.kind === 'text' && node.text.trim() === '';
 
-function requireString(el: HostElement, prop: string, why: string): string {
+function requireString(el: HostElement, prop: string, why: string, code: ValidationCode): string {
   const value = el.props[prop];
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`<${nameOf(el)}> requires a non-empty \`${prop}\` prop: ${why}`);
+    throw new ValidationError(code, `<${nameOf(el)}> requires a non-empty \`${prop}\` prop: ${why}`);
   }
   return value;
 }
@@ -140,28 +140,52 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
   const content = roots.filter((n) => !isBlank(n));
   const root = content[0];
   if (content.length !== 1 || !root || root.kind !== 'element' || root.type !== HostType.Document) {
-    throw new Error('The element passed to renderToBuffer/renderToFile must be a single <Document> at the root.');
+    throw new ValidationError(
+      'RTP_ROOT_NOT_DOCUMENT',
+      'The element passed to renderToBuffer/renderToFile must be a single <Document> at the root.',
+    );
   }
+  return within('Document', () => documentModel(root));
+}
+
+function documentModel(root: HostElement): DocumentModel {
   const example = 'e.g. <Document title="Invoice 42" lang="en-US">.';
-  const title = requireString(root, 'title', `PDF/UA requires a document title (dc:title), ${example}`);
-  const lang = requireString(root, 'lang', `PDF/UA requires the document language, ${example}`);
+  const title = requireString(
+    root,
+    'title',
+    `PDF/UA requires a document title (dc:title), ${example}`,
+    'RTP_DOCUMENT_NO_TITLE',
+  );
+  const lang = requireString(root, 'lang', `PDF/UA requires the document language, ${example}`, 'RTP_DOCUMENT_NO_LANG');
 
   const pages: PageModel[] = [];
   for (const child of root.children) {
     if (isBlank(child)) continue;
     if (child.kind !== 'element' || child.type !== HostType.Page) {
-      throw new Error(`<Document> may only contain <Page> children, found ${describe(child)}.`);
+      throw new ValidationError(
+        'RTP_INVALID_CHILD',
+        `<Document> may only contain <Page> children, found ${describe(child)}.`,
+      );
     }
-    const pageLang = optionalLang(child);
-    // Page is not a structure element, so its language lands on each top-level block.
-    const blocks = toBlocks(child, ROOT_TEXT).map((b) =>
-      b.kind === 'PageBreak' || b.lang || !pageLang ? b : { ...b, lang: pageLang },
-    );
-    pages.push({ geometry: pageGeometry(child), blocks, ...runningContent(child) });
+    pages.push(within(pageSegment(pages.length), () => pageModel(child)));
   }
-  if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
+  if (pages.length === 0) {
+    throw new ValidationError('RTP_DOCUMENT_NO_PAGES', '<Document> must contain at least one <Page>.');
+  }
   const diagnostics = [...checkHeadingLevels(pages), ...checkTableHeaders(pages), ...checkImageAlts(pages)];
   return { title, lang, pages, diagnostics };
+}
+
+/** How a path names the `<Page>` at `index` (from 0), as diagnostics do: `Page[1]` is the first. */
+export const pageSegment = (index: number) => `Page[${index + 1}]`;
+
+function pageModel(page: HostElement): PageModel {
+  const pageLang = optionalLang(page);
+  // Page is not a structure element, so its language lands on each top-level block.
+  const blocks = toBlocks(page, ROOT_TEXT).map((b) =>
+    b.kind === 'PageBreak' || b.lang || !pageLang ? b : { ...b, lang: pageLang },
+  );
+  return { geometry: pageGeometry(page), blocks, ...runningContent(page) };
 }
 
 /**
@@ -177,7 +201,7 @@ function visitStructure(pages: PageModel[], visit: (block: Exclude<Block, PageBr
     visit(block, path);
     if ('children' in block) block.children.forEach((child) => walk(child, path));
   };
-  pages.forEach((page, i) => page.blocks.forEach((block) => walk(block, `Document > Page[${i + 1}]`)));
+  pages.forEach((page, i) => page.blocks.forEach((block) => walk(block, `Document > ${pageSegment(i)}`)));
 }
 
 /** The component behind a structure tag, where they differ. A list item's body is not a component. */
@@ -258,7 +282,13 @@ const textKinds: Partial<Record<string, 'P' | HeadingKind>> = Object.fromEntries
 /** How many lists the content sits in: 0 outside any list. */
 type ListDepth = number;
 
+/** The blocks of `node`, a child of the `parent` component. Errors inside an element get its name on their path. */
 function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth: ListDepth): Block[] {
+  if (node.kind === 'text') return nodeBlocks(node, parent, inherited, depth);
+  return within(nameOf(node), () => nodeBlocks(node, parent, inherited, depth));
+}
+
+function nodeBlocks(node: HostNode, parent: string, inherited: InheritedText, depth: ListDepth): Block[] {
   if (node.kind === 'element') {
     if (node.type === HostType.Image) return [imageBlock(node)];
     const textKind = textKinds[node.type];
@@ -281,20 +311,25 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
       rejectLinks(children, 'Artifact', 'an artifact is skipped by assistive technology');
       return [{ kind: 'Artifact', artifact: artifactType(node), children, box: resolveBox(own) }];
     }
-    if (node.type === HostType.ListItem) throw new Error('<ListItem> must be a child of <List>.');
+    if (node.type === HostType.ListItem) {
+      throw new ValidationError('RTP_INVALID_CHILD', '<ListItem> must be a child of <List>.');
+    }
     if (node.type === HostType.Table) return tableBlock(node, inherited);
-    if (node.type === HostType.TR) throw new Error('<TR> must be a child of <Table>.');
+    if (node.type === HostType.TR) throw new ValidationError('RTP_INVALID_CHILD', '<TR> must be a child of <Table>.');
     if (node.type === HostType.TH || node.type === HostType.TD) {
-      throw new Error(`<${nameOf(node)}> must be a child of <TR>.`);
+      throw new ValidationError('RTP_INVALID_CHILD', `<${nameOf(node)}> must be a child of <TR>.`);
     }
     if (node.type === HostType.PageBreak) {
       const child = node.children.find((c) => !isBlank(c));
-      if (child) throw new Error(`<PageBreak> takes no children, found ${describe(child)}.`);
+      if (child) {
+        throw new ValidationError('RTP_INVALID_CHILD', `<PageBreak> takes no children, found ${describe(child)}.`);
+      }
       return [{ kind: 'PageBreak' }];
     }
   }
   const inline = parent === 'ListItem' ? 'text, <Span>, <Link>, ' : '';
-  throw new Error(
+  throw new ValidationError(
+    'RTP_INVALID_CHILD',
     `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Table>, <Image>, <Artifact> and <PageBreak> children, ` +
       `found ${describe(node)}.`,
   );
@@ -307,28 +342,39 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
 function imageBlock(el: HostElement): ImageBlock {
   const { src, alt, decorative } = el.props;
   if (!(typeof src === 'string' && src.trim() !== '') && !(src instanceof Uint8Array)) {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_IMAGE_NO_SRC',
       `<Image> requires a \`src\`: the path of a JPEG or PNG file, or its contents as a Buffer; got ${describeValue(src)}.`,
     );
   }
   const name = imageLabel(src);
   if (decorative !== undefined && decorative !== true) {
-    throw new Error(`${name} \`decorative\` must be true when given; got ${describeValue(decorative)}.`);
+    throw new ValidationError(
+      'RTP_INVALID_PROP',
+      `${name} \`decorative\` must be true when given; got ${describeValue(decorative)}.`,
+    );
   }
   if (alt !== undefined && typeof alt !== 'string') {
-    throw new Error(`${name} \`alt\` must be a string describing the image; got ${describeValue(alt)}.`);
+    throw new ValidationError(
+      'RTP_INVALID_PROP',
+      `${name} \`alt\` must be a string describing the image; got ${describeValue(alt)}.`,
+    );
   }
   if (alt !== undefined && decorative) {
-    throw new Error(`${name} has both \`alt\` and \`decorative\`; give \`alt\` if it conveys information, else \`decorative\`.`);
+    throw new ValidationError(
+      'RTP_IMAGE_ALT_AND_DECORATIVE',
+      `${name} has both \`alt\` and \`decorative\`; give \`alt\` if it conveys information, else \`decorative\`.`,
+    );
   }
   if (alt === undefined && !decorative) {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_IMAGE_NO_ALT',
       `${name} needs a text alternative: give \`alt\` describing what it shows, ` +
         'or `decorative` if it adds no information (PDF/UA: every image is described or an artifact).',
     );
   }
   const child = el.children.find((c) => !isBlank(c));
-  if (child) throw new Error(`<Image> takes no children, found ${describe(child)}.`);
+  if (child) throw new ValidationError('RTP_INVALID_CHILD', `<Image> takes no children, found ${describe(child)}.`);
   const style = parseImageStyle(el.props.style, 'Image');
   const lang = optionalLang(el);
   return {
@@ -355,7 +401,10 @@ const BULLETS = ['•', '–'];
 function listBlock(el: HostElement, inherited: InheritedText, depth: ListDepth): Block[] {
   const { ordered = false } = el.props;
   if (typeof ordered !== 'boolean') {
-    throw new Error(`<List> \`ordered\` must be true or false; got ${JSON.stringify(ordered)}.`);
+    throw new ValidationError(
+      'RTP_INVALID_PROP',
+      `<List> \`ordered\` must be true or false; got ${JSON.stringify(ordered)}.`,
+    );
   }
   const own = parseStyle(el.props.style, 'List');
   const text = inheritText(inherited, own);
@@ -364,10 +413,13 @@ function listBlock(el: HostElement, inherited: InheritedText, depth: ListDepth):
   const lang = optionalLang(el);
   const children = items.map((item, index): ContainerBlock => {
     if (item.kind !== 'element' || item.type !== HostType.ListItem) {
-      throw new Error(`<List> may only contain <ListItem> children, found ${describe(item)}.`);
+      throw new ValidationError(
+        'RTP_INVALID_CHILD',
+        `<List> may only contain <ListItem> children, found ${describe(item)}.`,
+      );
     }
     const label = ordered ? `${index + 1}.` : BULLETS[depth % BULLETS.length]!;
-    return listItemBlock(item, text, depth + 1, label);
+    return within('ListItem', () => listItemBlock(item, text, depth + 1, label));
   });
   const box = resolveBox(own, depth > 0 ? 'nested L' : 'L');
   return [{ kind: 'L', children, box, ...(lang ? { lang } : {}) }];
@@ -404,7 +456,12 @@ function listItemBlock(el: HostElement, inherited: InheritedText, depth: ListDep
   }
   flushText();
   // The label sits on the item's first line of text, so an item needs some.
-  if (!body.some(hasText)) throw new Error('<ListItem> has no content; put its text or blocks inside <ListItem>.');
+  if (!body.some(hasText)) {
+    throw new ValidationError(
+      'RTP_LIST_ITEM_EMPTY',
+      '<ListItem> has no content; put its text or blocks inside <ListItem>.',
+    );
+  }
   // A label is never underlined, like a browser's list marker.
   const labelStyle = resolveText({ ...text, textDecoration: 'none' });
   const lbl: TextBlock = {
@@ -431,31 +488,39 @@ function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
   const explicitScope = new Set<TextBlock>();
   const children = rows.map((row): ContainerBlock => {
     if (row.kind !== 'element' || row.type !== HostType.TR) {
-      throw new Error(`<Table> may only contain <TR> children, found ${describe(row)}.`);
+      throw new ValidationError('RTP_INVALID_CHILD', `<Table> may only contain <TR> children, found ${describe(row)}.`);
     }
-    const rowText = inheritText(text, parseRowStyle(row.props.style));
-    const cells = row.children.filter((c) => !isBlank(c));
-    if (cells.length === 0) throw new Error('<TR> has no cells; put <TH> and <TD> cells inside it.');
-    const rowWidths: (number | undefined)[] = [];
-    widths.push(rowWidths);
-    const blocks = cells.map((cell): TextBlock => {
-      if (cell.kind !== 'element' || (cell.type !== HostType.TH && cell.type !== HostType.TD)) {
-        throw new Error(`<TR> may only contain <TH> and <TD> children, found ${describe(cell)}.`);
+    return within('TR', (): ContainerBlock => {
+      const rowText = inheritText(text, parseRowStyle(row.props.style));
+      const cells = row.children.filter((c) => !isBlank(c));
+      if (cells.length === 0) {
+        throw new ValidationError('RTP_TABLE_ROW_EMPTY', '<TR> has no cells; put <TH> and <TD> cells inside it.');
       }
-      const block = cellBlock(cell, rowText);
-      if (block.scope) explicitScope.add(block);
-      rowWidths.push(cellWidth(cell));
-      return block;
+      const rowWidths: (number | undefined)[] = [];
+      widths.push(rowWidths);
+      const blocks = cells.map((cell): TextBlock => {
+        if (cell.kind !== 'element' || (cell.type !== HostType.TH && cell.type !== HostType.TD)) {
+          throw new ValidationError(
+            'RTP_INVALID_CHILD',
+            `<TR> may only contain <TH> and <TD> children, found ${describe(cell)}.`,
+          );
+        }
+        const block = within(nameOf(cell), () => cellBlock(cell, rowText));
+        if (block.scope) explicitScope.add(block);
+        rowWidths.push(cellWidth(cell));
+        return block;
+      });
+      const lang = optionalLang(row);
+      return { kind: 'TR', children: blocks, box: resolveBox({}), ...(lang ? { lang } : {}) };
     });
-    const lang = optionalLang(row);
-    return { kind: 'TR', children: blocks, box: resolveBox({}), ...(lang ? { lang } : {}) };
   });
 
   const grid = children.map((row) => row.children as TextBlock[]);
   const columnCount = grid[0]!.length;
   grid.forEach((cells, i) => {
     if (cells.length !== columnCount) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_TABLE_RAGGED_ROWS',
         `<Table> rows must all have the same number of cells: row 1 has ${columnCount}, row ${i + 1} has ` +
           `${cells.length}. Use an empty <TD/> for a cell with no content; rowSpan and colSpan are not supported yet.`,
       );
@@ -472,7 +537,8 @@ function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
   const columns = Array.from({ length: columnCount }, (_, column) => {
     const set = widths.map((row) => row[column]).filter((w) => w !== undefined);
     if (new Set(set).size > 1) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_TABLE_COLUMN_WIDTH_CONFLICT',
         `<Table> column ${column + 1} has cells with different \`style.width\` values (${[...new Set(set)].join(', ')} pt); ` +
           'set the width on one cell of the column, or the same width on all of them.',
       );
@@ -488,7 +554,8 @@ function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
   for (const prop of ['rowSpan', 'colSpan']) {
     const value = el.props[prop];
     if (value !== undefined && value !== 1) {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_TABLE_SPAN_UNSUPPORTED',
         `<${kind}> \`${prop}\` is not supported yet: tables have one cell per row and column; got ${JSON.stringify(value)}.`,
       );
     }
@@ -512,7 +579,10 @@ function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
 function optionalScope(el: HostElement): Scope | undefined {
   const { scope } = el.props;
   if (scope === undefined || scope === 'Column' || scope === 'Row') return scope;
-  throw new Error(`<TH> \`scope\` must be 'Column' or 'Row'; got ${JSON.stringify(scope)}.`);
+  throw new ValidationError(
+    'RTP_INVALID_PROP',
+    `<TH> \`scope\` must be 'Column' or 'Row'; got ${JSON.stringify(scope)}.`,
+  );
 }
 
 const cellWidth = (el: HostElement): number | undefined =>
@@ -524,7 +594,8 @@ function runningContent(page: HostElement): { header?: RunningContent; footer?: 
     const value = page.props[place];
     if (value === undefined) continue;
     if (typeof value !== 'function') {
-      throw new Error(
+      throw new ValidationError(
+        'RTP_INVALID_PROP',
         `<Page> \`${place}\` must be a function of { pageNumber, totalPages } returning its content, e.g. ` +
           `${place}={({ pageNumber, totalPages }) => <P>Page {pageNumber} of {totalPages}</P>}; got ${JSON.stringify(value)}.`,
       );
@@ -560,7 +631,9 @@ export function runningBlocks(nodes: HostNode[], place: RunningPlace): Block[] {
   }
   flushText();
   const noBreaks = (block: Block) => {
-    if (block.kind === 'PageBreak') throw new Error(`<${owner}> cannot contain <PageBreak>.`);
+    if (block.kind === 'PageBreak') {
+      throw new ValidationError('RTP_INVALID_CHILD', `<${owner}> cannot contain <PageBreak>.`);
+    }
     if ('children' in block) block.children.forEach(noBreaks);
   };
   blocks.forEach(noBreaks);
@@ -573,7 +646,10 @@ function rejectLinks(blocks: Block[], owner: string, why: string): void {
   const check = (block: Block) => {
     if ('children' in block) return block.children.forEach(check);
     if ('runs' in block && block.runs.some((run) => run.link)) {
-      throw new Error(`<${owner}> cannot contain <Link>: ${why}, so a link there could not be reached.`);
+      throw new ValidationError(
+        'RTP_LINK_IN_ARTIFACT',
+        `<${owner}> cannot contain <Link>: ${why}, so a link there could not be reached.`,
+      );
     }
   };
   blocks.forEach(check);
@@ -584,7 +660,10 @@ const ARTIFACT_TYPES: readonly ArtifactType[] = ['Layout', 'Page', 'Pagination']
 function artifactType(el: HostElement): ArtifactType {
   const { type = 'Layout' } = el.props;
   if (!ARTIFACT_TYPES.includes(type as ArtifactType)) {
-    throw new Error(`<Artifact> \`type\` must be 'Layout', 'Page' or 'Pagination'; got ${JSON.stringify(type)}.`);
+    throw new ValidationError(
+      'RTP_INVALID_PROP',
+      `<Artifact> \`type\` must be 'Layout', 'Page' or 'Pagination'; got ${JSON.stringify(type)}.`,
+    );
   }
   return type as ArtifactType;
 }
@@ -610,7 +689,8 @@ function pageGeometry(page: HostElement): PageGeometry {
   } else if (Array.isArray(size) && size.length === 2 && size.every((n) => isNumber(n) && n > 0)) {
     [width, height] = size as [number, number];
   } else {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_PAGE_INVALID_SIZE',
       `<Page> \`size\` must be one of ${Object.keys(PAGE_SIZES).map((n) => `'${n}'`).join(', ')} ` +
         `or [width, height] in points greater than 0; got ${JSON.stringify(size)}.`,
     );
@@ -619,21 +699,33 @@ function pageGeometry(page: HostElement): PageGeometry {
   const side = (name: keyof Sides, value: unknown) => {
     if (value === undefined) return DEFAULT_PAGE_MARGIN;
     if (isNumber(value) && value >= 0) return value;
-    throw new Error(`<Page> \`margin.${name}\` must be a non-negative number of points; got ${JSON.stringify(value)}.`);
+    throw new ValidationError(
+      'RTP_PAGE_INVALID_MARGIN',
+      `<Page> \`margin.${name}\` must be a non-negative number of points; got ${JSON.stringify(value)}.`,
+    );
   };
   let sides: Sides;
   if (isNumber(margin)) {
-    if (margin < 0) throw new Error(`<Page> \`margin\` must be a non-negative number of points; got ${margin}.`);
+    if (margin < 0) {
+      throw new ValidationError(
+        'RTP_PAGE_INVALID_MARGIN',
+        `<Page> \`margin\` must be a non-negative number of points; got ${margin}.`,
+      );
+    }
     sides = { top: margin, right: margin, bottom: margin, left: margin };
   } else if (margin !== null && typeof margin === 'object' && !Array.isArray(margin)) {
     const m = margin as Record<string, unknown>;
     const unknown = Object.keys(m).filter((k) => !['top', 'right', 'bottom', 'left'].includes(k));
     if (unknown.length > 0) {
-      throw new Error(`<Page> \`margin\` has unknown key ${JSON.stringify(unknown[0])}; use top, right, bottom, left.`);
+      throw new ValidationError(
+        'RTP_PAGE_INVALID_MARGIN',
+        `<Page> \`margin\` has unknown key ${JSON.stringify(unknown[0])}; use top, right, bottom, left.`,
+      );
     }
     sides = { top: side('top', m.top), right: side('right', m.right), bottom: side('bottom', m.bottom), left: side('left', m.left) };
   } else {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_PAGE_INVALID_MARGIN',
       `<Page> \`margin\` must be a number of points or { top, right, bottom, left }; got ${JSON.stringify(margin)}.`,
     );
   }
@@ -641,7 +733,8 @@ function pageGeometry(page: HostElement): PageGeometry {
   const contentWidth = width - sides.left - sides.right;
   const contentHeight = height - sides.top - sides.bottom;
   if (!(contentWidth > 0 && contentHeight > 0)) {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_PAGE_NO_CONTENT_AREA',
       `<Page> margins leave no content area: ${round(contentWidth)} × ${round(contentHeight)} pt ` +
         `on a ${round(width)} × ${round(height)} pt page.`,
     );
@@ -655,7 +748,10 @@ function optionalLang(el: HostElement): string | undefined {
   const value = el.props.lang;
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`<${nameOf(el)}> \`lang\` must be a non-empty BCP 47 language tag, e.g. lang="es-ES".`);
+    throw new ValidationError(
+      'RTP_INVALID_LANG',
+      `<${nameOf(el)}> \`lang\` must be a non-empty BCP 47 language tag, e.g. lang="es-ES".`,
+    );
   }
   return value;
 }
@@ -694,8 +790,7 @@ type InlineContext = { inline?: InlineElement; link?: LinkTarget };
 /** The text of a block in document order, split into runs wherever the style or inline element changes. */
 function collectRuns(el: HostElement, inherited: InheritedText, context: InlineContext = {}): TextRun[] {
   const { link } = context;
-  return el.children.flatMap((c): TextRun[] => {
-    if (c.kind === 'text') return [{ text: c.text, style: resolveText(inherited), ...context }];
+  const elementRuns = (c: HostElement): TextRun[] => {
     if (c.type === HostType.Span) {
       const lang = optionalLang(c);
       const inner = lang ? { ...context, inline: { kind: 'Span', lang, ...parentOf(context) } satisfies LangSpan } : context;
@@ -703,8 +798,16 @@ function collectRuns(el: HostElement, inherited: InheritedText, context: InlineC
     }
     if (c.type === HostType.Link && !link) return linkRuns(c, inherited, context);
     const allowed = link ? 'text and <Span>' : 'text, <Span> and <Link>';
-    throw new Error(`<${nameOf(el)}> may only contain ${allowed}, found ${describe(c)}.`);
-  });
+    throw new ValidationError(
+      'RTP_INVALID_CHILD',
+      `<${nameOf(el)}> may only contain ${allowed}, found ${describe(c)}.`,
+    );
+  };
+  return el.children.flatMap((c): TextRun[] =>
+    c.kind === 'text'
+      ? [{ text: c.text, style: resolveText(inherited), ...context }]
+      : within(nameOf(c), () => elementRuns(c)),
+  );
 }
 
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
@@ -714,23 +817,26 @@ const ALLOWED_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:'];
 const parentOf = (context: InlineContext) => (context.inline ? { parent: context.inline } : {});
 
 function linkRuns(el: HostElement, inherited: InheritedText, context: InlineContext): TextRun[] {
-  const href = requireString(el, 'href', 'an external URL such as "https://example.com".');
+  const href = requireString(el, 'href', 'an external URL such as "https://example.com".', 'RTP_LINK_NO_HREF');
   if (!HAS_SCHEME.test(href) || !URL.canParse(href)) {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_LINK_HREF_UNSUPPORTED',
       `<Link> href ${JSON.stringify(href)} is not supported yet: only external URLs with a scheme ` +
         '(e.g. "https://example.com") are; internal links and anchors are not.',
     );
   }
   const scheme = new URL(href).protocol;
   if (!ALLOWED_SCHEMES.includes(scheme)) {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_LINK_SCHEME_NOT_ALLOWED',
       `<Link> href ${JSON.stringify(href)} uses the scheme ${JSON.stringify(scheme)}, which is not allowed; ` +
         `use one of ${ALLOWED_SCHEMES.join(', ')}.`,
     );
   }
   const { description } = el.props;
   if (description !== undefined && (typeof description !== 'string' || description.trim() === '')) {
-    throw new Error(
+    throw new ValidationError(
+      'RTP_INVALID_PROP',
       `<Link> \`description\` must be a non-empty string (it is what assistive technology announces); ` +
         `got ${JSON.stringify(description)}. Leave it out to use the link text.`,
     );
@@ -742,7 +848,10 @@ function linkRuns(el: HostElement, inherited: InheritedText, context: InlineCont
   const runs = collectRuns(el, inheritText(inherited, style), { inline: target, link: target });
   const visible = textOf(runs).replace(/\s+/g, ' ').trim();
   if (!visible) {
-    throw new Error(`<Link> href ${JSON.stringify(href)} has no visible text; put the link text inside <Link>.`);
+    throw new ValidationError(
+      'RTP_LINK_NO_TEXT',
+      `<Link> href ${JSON.stringify(href)} has no visible text; put the link text inside <Link>.`,
+    );
   }
   target.contents = typeof description === 'string' ? description.trim() : visible;
   return runs;
