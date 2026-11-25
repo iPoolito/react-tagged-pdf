@@ -145,13 +145,29 @@ const STYLE_CHECKS: Record<keyof Style, Check> = {
   backgroundColor: color,
 };
 
-/** Validate a raw `style` prop. `owner` names the component in error messages. */
-export function parseStyle(raw: unknown, owner: string): Style {
+/** A raw `style` prop as an object (empty when absent). Throws when it is anything else. */
+function styleObject(raw: unknown, owner: string): Record<string, unknown> {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
   }
-  for (const [key, value] of Object.entries(raw)) {
+  return raw as Record<string, unknown>;
+}
+
+/** Throws unless `value`, the style's `key`, is absent or a number of points greater than 0. */
+function checkPositiveLength(value: unknown, key: string, owner: string): asserts value is number | undefined {
+  if (value !== undefined && !(isNumber(value) && value > 0)) {
+    throw new ValidationError(
+      'RTP_INVALID_STYLE',
+      `<${owner}> \`style.${key}\` must be a number of points greater than 0; got ${describeValue(value)}.`,
+    );
+  }
+}
+
+/** Validate a raw `style` prop. `owner` names the component in error messages. */
+export function parseStyle(raw: unknown, owner: string): Style {
+  const style = styleObject(raw, owner);
+  for (const [key, value] of Object.entries(style)) {
     if (value === undefined) continue;
     const check = Object.hasOwn(STYLE_CHECKS, key) ? STYLE_CHECKS[key as keyof Style] : undefined;
     if (!check) {
@@ -168,7 +184,7 @@ export function parseStyle(raw: unknown, owner: string): Style {
       );
     }
   }
-  return raw as Style;
+  return style as Style;
 }
 
 const INLINE_KEYS = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'color', 'textDecoration'] as const;
@@ -211,19 +227,9 @@ export type ImageStyle = Omit<Style, (typeof TEXT_KEYS)[number]> & {
 
 /** Validate the `style` of an `<Image>`: size and box properties; text properties are refused. */
 export function parseImageStyle(raw: unknown, owner: string): ImageStyle {
-  if (raw === undefined || raw === null) return {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
-  }
-  const { width, height, ...rest } = raw as Record<string, unknown>;
-  for (const [key, value] of Object.entries({ width, height })) {
-    if (value !== undefined && !(isNumber(value) && value > 0)) {
-      throw new ValidationError(
-        'RTP_INVALID_STYLE',
-        `<${owner}> \`style.${key}\` must be a number of points greater than 0; got ${describeValue(value)}.`,
-      );
-    }
-  }
+  const { width, height, ...rest } = styleObject(raw, owner);
+  checkPositiveLength(width, 'width', owner);
+  checkPositiveLength(height, 'height', owner);
   const box = parseStyle(rest, owner);
   for (const key of TEXT_KEYS) {
     if (box[key] !== undefined) {
@@ -236,8 +242,8 @@ export function parseImageStyle(raw: unknown, owner: string): ImageStyle {
   }
   return {
     ...box,
-    ...(width === undefined ? {} : { width: width as number }),
-    ...(height === undefined ? {} : { height: height as number }),
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
   };
 }
 
@@ -263,17 +269,8 @@ const MARGIN_KEYS = ['margin', 'marginTop', 'marginRight', 'marginBottom', 'marg
  * which fixes the width of the cell's column.
  */
 export function parseCellStyle(raw: unknown, owner: 'TH' | 'TD'): Style & { width?: number } {
-  if (raw === undefined || raw === null) return {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new ValidationError('RTP_INVALID_STYLE', `<${owner}> \`style\` must be an object.`);
-  }
-  const { width, ...rest } = raw as Record<string, unknown>;
-  if (width !== undefined && !(isNumber(width) && width > 0)) {
-    throw new ValidationError(
-      'RTP_INVALID_STYLE',
-      `<${owner}> \`style.width\` must be a number of points greater than 0; got ${describeValue(width)}.`,
-    );
-  }
+  const { width, ...rest } = styleObject(raw, owner);
+  checkPositiveLength(width, 'width', owner);
   const style = parseStyle(rest, owner);
   const margin = MARGIN_KEYS.find((key) => style[key as keyof Style] !== undefined);
   if (margin) {
