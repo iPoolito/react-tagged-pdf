@@ -19,6 +19,10 @@ export const HostType = {
   Link: 'RTP_LINK',
   List: 'RTP_LIST',
   ListItem: 'RTP_LIST_ITEM',
+  Table: 'RTP_TABLE',
+  TR: 'RTP_TR',
+  TH: 'RTP_TH',
+  TD: 'RTP_TD',
   ...headingHostTypes,
 } as const;
 export type HostType = (typeof HostType)[keyof typeof HostType];
@@ -69,6 +73,30 @@ export type ListProps = BlockProps & {
   ordered?: boolean;
 };
 export type ListItemProps = BlockProps;
+
+export type TableProps = BlockProps;
+/** A table row takes text properties only (fontFamily, fontSize, ...), which its cells inherit. */
+export type TRProps = CommonProps & { style?: Style };
+/**
+ * Style of a table cell. `width` (points) fixes the width of the cell's column; columns without
+ * one share the remaining width equally. Margins are not supported on cells.
+ */
+export type CellStyle = Style & { width?: number };
+export type TDProps = CommonProps & {
+  style?: CellStyle;
+  /** Not supported yet: throws. */
+  rowSpan?: number;
+  /** Not supported yet: throws. */
+  colSpan?: number;
+};
+export type THProps = TDProps & {
+  /**
+   * Which cells this header describes: `'Column'` (the cells below it) or `'Row'` (the cells to
+   * its right). Default: `'Column'` when its whole row is header cells, `'Row'` when it is the
+   * first cell of a row that has data cells, `'Column'` otherwise.
+   */
+  scope?: 'Column' | 'Row';
+};
 
 export type SpanProps = {
   /**
@@ -129,6 +157,36 @@ export function List(props: ListProps) {
  */
 export function ListItem(props: ListItemProps) {
   return createElement(HostType.ListItem, props);
+}
+
+/**
+ * A simple data table: rows of header (`<TH>`) and data (`<TD>`) cells, one cell per row and
+ * column. Its only children are `<TR>`s, all with the same number of cells. Columns share the
+ * table's width equally unless a cell's `style.width` fixes its column's width. A table must fit
+ * on one page (it moves to the next page whole when it does not fit on the current one). Maps to
+ * the `Table` structure element. Warns when it has no `<TH>`: screen readers need header cells
+ * to announce which row and column a cell belongs to.
+ */
+export function Table(props: TableProps) {
+  return createElement(HostType.Table, props);
+}
+
+/** A table row of `<TH>` and `<TD>` cells. Maps to the `TR` structure element. */
+export function TR(props: TRProps) {
+  return createElement(HostType.TR, props);
+}
+
+/**
+ * A header cell holding text (with `<Span>` and `<Link>`), bold by default. Maps to the `TH`
+ * structure element with a `Scope` attribute (see `scope`).
+ */
+export function TH(props: THProps) {
+  return createElement(HostType.TH, props);
+}
+
+/** A data cell holding text (with `<Span>` and `<Link>`). Maps to the `TD` structure element. */
+export function TD(props: TDProps) {
+  return createElement(HostType.TD, props);
 }
 
 /**

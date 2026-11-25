@@ -94,10 +94,15 @@ export const ROOT_TEXT: InheritedText = {
 /** Built-in styles per element, applied under the author's `style` (like a browser's default stylesheet). */
 const TEXT_BLOCK_DEFAULTS: Style = { marginBottom: 6 };
 const LIST_INDENT = 24;
+/** Space between a table cell's border and its text, in points. */
+const CELL_PADDING = 4;
 /** Elements with built-in styles. A nested list (inside a list item) has no margin, like in browsers. */
-export type StyledKind = 'P' | HeadingKind | 'L' | 'nested L';
+export type StyledKind = 'P' | HeadingKind | 'L' | 'nested L' | 'Table' | 'TH' | 'TD';
 const ELEMENT_DEFAULTS: Record<StyledKind, Style> = {
   P: TEXT_BLOCK_DEFAULTS,
+  Table: { marginBottom: 6 },
+  TH: { padding: CELL_PADDING, fontWeight: 'bold' },
+  TD: { padding: CELL_PADDING },
   L: { paddingLeft: LIST_INDENT, marginBottom: 6 },
   'nested L': { paddingLeft: LIST_INDENT },
   ...(Object.fromEntries(
@@ -177,6 +182,44 @@ export function parseInlineStyle(raw: unknown, owner: string): InlineStyle {
     }
   }
   return style;
+}
+
+const TEXT_KEYS = [...INLINE_KEYS, 'lineHeight'] as const;
+
+/** Validate the `style` of a table row: text properties only, which its cells inherit. */
+export function parseRowStyle(raw: unknown): Style {
+  const style = parseStyle(raw, 'TR');
+  for (const key of Object.keys(style)) {
+    if (style[key as keyof Style] !== undefined && !(TEXT_KEYS as readonly string[]).includes(key)) {
+      throw new Error(
+        `<TR> \`style.${key}\` is not supported on table rows; set it on the <TH>/<TD> cells or the <Table>. ` +
+          `Row styles support ${TEXT_KEYS.join(', ')}.`,
+      );
+    }
+  }
+  return style;
+}
+
+const MARGIN_KEYS = ['margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft'];
+
+/**
+ * Validate the `style` of a table cell: any block style except margins, plus `width` in points,
+ * which fixes the width of the cell's column.
+ */
+export function parseCellStyle(raw: unknown, owner: 'TH' | 'TD'): Style & { width?: number } {
+  const { width, ...rest } = (raw ?? {}) as Record<string, unknown>;
+  if (raw !== undefined && raw !== null && (typeof raw !== 'object' || Array.isArray(raw))) {
+    throw new Error(`<${owner}> \`style\` must be an object.`);
+  }
+  if (width !== undefined && !(isNumber(width) && width > 0)) {
+    throw new Error(`<${owner}> \`style.width\` must be a number of points greater than 0; got ${describeValue(width)}.`);
+  }
+  const style = parseStyle(rest, owner);
+  const margin = MARGIN_KEYS.find((key) => style[key as keyof Style] !== undefined);
+  if (margin) {
+    throw new Error(`<${owner}> \`style.${margin}\` is not supported on table cells; use padding, or a margin on the <Table>.`);
+  }
+  return width === undefined ? style : { ...style, width };
 }
 
 const describeValue = (v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v) ?? String(v));

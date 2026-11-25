@@ -153,7 +153,7 @@ describe('Span errors', () => {
 
   it('is not a block', async () => {
     await expect(render(<Span>loose</Span>)).rejects.toThrow(
-      '<Page> may only contain <P>, <H1>–<H6>, <Section>, <List> and <PageBreak> children, found <Span>.',
+      '<Page> may only contain <P>, <H1>–<H6>, <Section>, <List>, <Table> and <PageBreak> children, found <Span>.',
     );
   });
 });

@@ -1,6 +1,7 @@
-export { Document, H1, H2, H3, H4, H5, H6, Link, List, ListItem, P, Page, PageBreak, Section, Span } from './components.js';
+export { Document, H1, H2, H3, H4, H5, H6, Link, List, ListItem, P, Page, PageBreak, Section, Span, Table, TD, TH, TR } from './components.js';
 export type {
   BlockProps,
+  CellStyle,
   CommonProps,
   DocumentProps,
   HeadingProps,
@@ -16,6 +17,10 @@ export type {
   PProps,
   SectionProps,
   SpanProps,
+  TableProps,
+  TDProps,
+  THProps,
+  TRProps,
 } from './components.js';
 export { renderToBuffer, renderToFile } from './render.js';
 export type { RenderOptions } from './render.js';

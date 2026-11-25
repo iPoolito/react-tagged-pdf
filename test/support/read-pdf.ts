@@ -102,6 +102,10 @@ export async function structOutline(bytes: Uint8Array): Promise<string> {
         const v = node.lookup(PDFName.of(key));
         if (v instanceof PDFString || v instanceof PDFHexString) attrs.push(`${key}=${JSON.stringify(v.decodeText())}`);
       }
+      // Table attributes (/A << /O /Table /Scope /Column >>), e.g. a TH's Scope.
+      const a = node.lookup(PDFName.of('A'));
+      const scope = a instanceof PDFDict ? a.get(PDFName.of('Scope')) : undefined;
+      if (scope) attrs.push(`Scope=${scope.toString().slice(1)}`);
       const t = own.replace(/\s+/g, ' ').trim();
       lines.push(
         `${'  '.repeat(depth)}${S.toString().slice(1)}${attrs.length ? ` [${attrs.join(' ')}]` : ''}${t ? ` ${JSON.stringify(t)}` : ''}` +

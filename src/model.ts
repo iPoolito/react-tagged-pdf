@@ -5,6 +5,8 @@ import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './
 import type { HostElement, HostNode } from './reconciler.js';
 import {
   type BoxStyle,
+  parseCellStyle,
+  parseRowStyle,
   type InheritedText,
   inheritText,
   parseInlineStyle,
@@ -19,11 +21,15 @@ import {
 
 /**
  * Structure tag of a text block; layout and paint carry it through to the PDF structure tree.
- * `Lbl` is a list item's generated bullet or number.
+ * `Lbl` is a list item's generated bullet or number; `TH` and `TD` are table cells.
  */
-export type TextKind = 'P' | HeadingKind | 'Lbl';
+export type TextKind = 'P' | HeadingKind | 'Lbl' | CellKind;
+/** Structure tag of a table cell. */
+export type CellKind = 'TH' | 'TD';
+/** What a header cell describes: the cells below it (`Column`) or to its right (`Row`). */
+export type Scope = 'Column' | 'Row';
 /** Structure tag of a block that holds other blocks. */
-export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody';
+export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody' | 'Table' | 'TR';
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | ContainerKind;
 /**
@@ -58,6 +64,8 @@ export type TextBlock = {
   style: TextStyle;
   box: BoxStyle;
   inParent?: true;
+  /** A header cell's `Scope` attribute. */
+  scope?: Scope;
 };
 /**
  * A block of blocks: a `<Section>`, a `<List>`, a `<ListItem>` or a list item's body. `label` is a
@@ -69,6 +77,8 @@ export type ContainerBlock = {
   lang?: string;
   box: BoxStyle;
   label?: TextBlock;
+  /** A table's column widths in points; `undefined` columns share the remaining width equally. */
+  columns?: (number | undefined)[];
 };
 /** Forces the following content onto a new page. Not tagged. */
 export type PageBreakBlock = { kind: 'PageBreak' };
@@ -124,7 +134,7 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     pages.push({ geometry: pageGeometry(child), blocks });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
-  return { title, lang, pages, warnings: checkHeadingLevels(pages) };
+  return { title, lang, pages, warnings: [...checkHeadingLevels(pages), ...checkTableHeaders(pages)] };
 }
 
 /** Headings must start at H1 and never skip a level going down (PDF/UA-1, veraPDF rule 7.4.2-1). */
@@ -146,6 +156,24 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
       );
     }
     previous = { block, level };
+  };
+  pages.forEach((page) => page.blocks.forEach(visit));
+  return warnings;
+}
+
+/** A table without header cells cannot tell a screen reader what its data cells mean. */
+function checkTableHeaders(pages: PageModel[]): string[] {
+  const warnings: string[] = [];
+  const visit = (block: Block) => {
+    if (!('children' in block)) return;
+    if (block.kind !== 'Table') return block.children.forEach(visit);
+    const cells = block.children.flatMap((row) => ('children' in row ? row.children : []));
+    if (cells.some((cell) => cell.kind === 'TH')) return;
+    const first = cells.map((cell) => ('text' in cell ? cell.text.trim() : '')).find((text) => text !== '') ?? '';
+    warnings.push(
+      `<Table> starting ${JSON.stringify(first.slice(0, 40))} has no <TH> header cells; screen readers need ` +
+        'header cells to announce which row and column a data cell belongs to. Use <TH> for its headers.',
+    );
   };
   pages.forEach((page) => page.blocks.forEach(visit));
   return warnings;
@@ -178,6 +206,11 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
     }
     if (node.type === HostType.List) return listBlock(node, inherited, depth);
     if (node.type === HostType.ListItem) throw new Error('<ListItem> must be a child of <List>.');
+    if (node.type === HostType.Table) return tableBlock(node, inherited);
+    if (node.type === HostType.TR) throw new Error('<TR> must be a child of <Table>.');
+    if (node.type === HostType.TH || node.type === HostType.TD) {
+      throw new Error(`<${nameOf(node)}> must be a child of <TR>.`);
+    }
     if (node.type === HostType.PageBreak) {
       const child = node.children.find((c) => !isBlank(c));
       if (child) throw new Error(`<PageBreak> takes no children, found ${describe(child)}.`);
@@ -186,7 +219,7 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
   }
   const inline = parent === 'ListItem' ? 'text, <Span>, <Link>, ' : '';
   throw new Error(
-    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List> and <PageBreak> children, ` +
+    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Table> and <PageBreak> children, ` +
       `found ${describe(node)}.`,
   );
 }
@@ -260,6 +293,106 @@ function listItemBlock(el: HostElement, inherited: InheritedText, depth: ListDep
   const lbody: ContainerBlock = { kind: 'LBody', children: body, box: resolveBox({}) };
   return { kind: 'LI', children: [lbody], label: lbl, box: resolveBox(own), ...(lang ? { lang } : {}) };
 }
+
+/**
+ * A `<Table>`: a `Table` of `TR`s of `TH`/`TD` cells, one cell per row and column. Header cells
+ * get a `Scope`; column widths come from the cells' `style.width`. An empty table adds nothing.
+ */
+function tableBlock(el: HostElement, inherited: InheritedText): Block[] {
+  const own = parseStyle(el.props.style, 'Table');
+  const text = inheritText(inherited, own);
+  const rows = el.children.filter((c) => !isBlank(c));
+  if (rows.length === 0) return [];
+  const widths: (number | undefined)[][] = [];
+  const explicitScope = new Set<TextBlock>();
+  const children = rows.map((row): ContainerBlock => {
+    if (row.kind !== 'element' || row.type !== HostType.TR) {
+      throw new Error(`<Table> may only contain <TR> children, found ${describe(row)}.`);
+    }
+    const rowText = inheritText(text, parseRowStyle(row.props.style));
+    const cells = row.children.filter((c) => !isBlank(c));
+    if (cells.length === 0) throw new Error('<TR> has no cells; put <TH> and <TD> cells inside it.');
+    const rowWidths: (number | undefined)[] = [];
+    widths.push(rowWidths);
+    const blocks = cells.map((cell): TextBlock => {
+      if (cell.kind !== 'element' || (cell.type !== HostType.TH && cell.type !== HostType.TD)) {
+        throw new Error(`<TR> may only contain <TH> and <TD> children, found ${describe(cell)}.`);
+      }
+      const block = cellBlock(cell, rowText);
+      if (block.scope) explicitScope.add(block);
+      rowWidths.push(cellWidth(cell));
+      return block;
+    });
+    const lang = optionalLang(row);
+    return { kind: 'TR', children: blocks, box: resolveBox({}), ...(lang ? { lang } : {}) };
+  });
+
+  const grid = children.map((row) => row.children as TextBlock[]);
+  const columnCount = grid[0]!.length;
+  grid.forEach((cells, i) => {
+    if (cells.length !== columnCount) {
+      throw new Error(
+        `<Table> rows must all have the same number of cells: row 1 has ${columnCount}, row ${i + 1} has ` +
+          `${cells.length}. Use an empty <TD/> for a cell with no content; rowSpan and colSpan are not supported yet.`,
+      );
+    }
+  });
+  grid.forEach((cells) =>
+    cells.forEach((cell, column) => {
+      if (cell.kind !== 'TH' || explicitScope.has(cell)) return;
+      const headerRow = cells.every((c) => c.kind === 'TH');
+      cell.scope = !headerRow && column === 0 ? 'Row' : 'Column';
+    }),
+  );
+
+  const columns = Array.from({ length: columnCount }, (_, column) => {
+    const set = widths.map((row) => row[column]).filter((w) => w !== undefined);
+    if (new Set(set).size > 1) {
+      throw new Error(
+        `<Table> column ${column + 1} has cells with different \`style.width\` values (${[...new Set(set)].join(', ')} pt); ` +
+          'set the width on one cell of the column, or the same width on all of them.',
+      );
+    }
+    return set[0];
+  });
+  const lang = optionalLang(el);
+  return [{ kind: 'Table', children, columns, box: resolveBox(own, 'Table'), ...(lang ? { lang } : {}) }];
+}
+
+function cellBlock(el: HostElement, inherited: InheritedText): TextBlock {
+  const kind: CellKind = el.type === HostType.TH ? 'TH' : 'TD';
+  for (const prop of ['rowSpan', 'colSpan']) {
+    const value = el.props[prop];
+    if (value !== undefined && value !== 1) {
+      throw new Error(
+        `<${kind}> \`${prop}\` is not supported yet: tables have one cell per row and column; got ${JSON.stringify(value)}.`,
+      );
+    }
+  }
+  const { width: _width, ...own } = parseCellStyle(el.props.style, kind);
+  const text = inheritText(inherited, own, kind);
+  const runs = mergeRuns(collectRuns(el, text));
+  const lang = optionalLang(el);
+  const scope = kind === 'TH' ? optionalScope(el) : undefined;
+  return {
+    kind,
+    text: textOf(runs),
+    runs,
+    style: resolveText(text),
+    box: resolveBox(own, kind),
+    ...(lang ? { lang } : {}),
+    ...(scope ? { scope } : {}),
+  };
+}
+
+function optionalScope(el: HostElement): Scope | undefined {
+  const { scope } = el.props;
+  if (scope === undefined || scope === 'Column' || scope === 'Row') return scope;
+  throw new Error(`<TH> \`scope\` must be 'Column' or 'Row'; got ${JSON.stringify(scope)}.`);
+}
+
+const cellWidth = (el: HostElement): number | undefined =>
+  (el.props.style as { width?: number } | undefined)?.width;
 
 /** Paper sizes in points, portrait. */
 const PAGE_SIZES = {

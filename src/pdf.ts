@@ -113,7 +113,9 @@ function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elemen
   }
   let elem = elements.get(block.source);
   if (!elem) {
-    elem = doc.struct(block.kind, block.lang ? { lang: block.lang } : {});
+    const scope = 'scope' in block.source ? block.source.scope : undefined;
+    // A header cell's Scope is written as /A << /O /Table /Scope ... >>.
+    elem = doc.struct(block.kind, { ...(block.lang ? { lang: block.lang } : {}), ...(scope ? { scope } : {}) });
     parent.add(elem);
     elements.set(block.source, elem);
   }
