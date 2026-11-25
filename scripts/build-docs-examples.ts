@@ -1,12 +1,13 @@
 // Prepares the docs site's example pages: runs every examples/*.tsx, copies the PDF it writes to
 // site/public/examples/, validates those PDFs with veraPDF (PDF/UA-1, Docker required) and writes
-// site/src/data/examples.json for the site to read.
+// site/src/data/examples.json for the site to read. An example that is not PDF/UA-1 compliant
+// fails the build (exit status 1, listing its failed rules), so a broken example is never deployed.
 // `VERAPDF=skip` renders the PDFs without validating them; their badges then say "not validated".
 import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type DocsExample, displaySource, examplePdfName } from './docs-examples.js';
+import { type DocsExample, displaySource, examplePdfName, nonCompliant } from './docs-examples.js';
 import { type FileResult, VERAPDF_IMAGE, validateDirectory } from './verapdf.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -53,3 +54,9 @@ await mkdir(join(siteDir, 'src', 'data'), { recursive: true });
 await writeFile(dataFile, `${JSON.stringify(examples, null, 2)}\n`);
 for (const e of examples) console.log(`${e.verapdf.status.toUpperCase().padEnd(7)} ${e.name}`);
 console.log(`Wrote ${examples.length} example(s) to ${dataFile}`);
+
+const failures = nonCompliant(examples);
+if (failures) {
+  console.error(failures);
+  process.exit(1);
+}

@@ -28,3 +28,19 @@ export function displaySource(source: string): string {
     .replace(/^\/\/ Run with .*\r?\n/, '')
     .replaceAll(/from '\.\.\/src\/index\.js'/g, "from 'react-tagged-pdf'");
 }
+
+/**
+ * What to report when examples failed veraPDF: each failed example with the rules it failed, or
+ * `undefined` when every example passed or was not validated (`VERAPDF=skip`).
+ */
+export function nonCompliant(examples: readonly DocsExample[]): string | undefined {
+  const failed = examples.filter((e) => e.verapdf.status === 'failed');
+  if (failed.length === 0) return undefined;
+  return [
+    `${failed.length} example(s) failed veraPDF PDF/UA-1 validation:`,
+    ...failed.flatMap((e) => [
+      `  ${e.name}`,
+      ...e.verapdf.failedRules.map((r) => `    ${r.rule} (${r.failedChecks} failed checks): ${r.description}`),
+    ]),
+  ].join('\n');
+}

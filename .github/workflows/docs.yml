@@ -1,7 +1,8 @@
 name: Docs
 
 # Builds the Astro Starlight site in site/ and deploys it to GitHub Pages.
-# The build renders every example and validates the PDFs with veraPDF (Docker) for the badges.
+# The build renders every example and validates the PDFs with veraPDF (Docker) for the badges;
+# an example that is not PDF/UA-1 compliant fails the build, so nothing is deployed.
 # Requires Settings -> Pages -> Source: "GitHub Actions".
 
 on:
