@@ -196,16 +196,18 @@ function pageModel(page: HostElement): PageModel {
 function visitStructure(pages: PageModel[], visit: (block: Exclude<Block, PageBreakBlock>, path: string) => void): void {
   const walk = (block: Block, parent: string) => {
     if (block.kind === 'Artifact' || block.kind === 'PageBreak') return;
-    const name = componentOfKind[block.kind] ?? block.kind;
-    const path = name ? `${parent} > ${name}` : parent;
+    // A list item's body is part of its <ListItem>, already on the path.
+    const path = block.kind === 'LBody' ? parent : `${parent} > ${componentOf(block.kind)}`;
     visit(block, path);
     if ('children' in block) block.children.forEach((child) => walk(child, path));
   };
   pages.forEach((page, i) => page.blocks.forEach((block) => walk(block, `Document > ${pageSegment(i)}`)));
 }
 
-/** The component behind a structure tag, where they differ. A list item's body is not a component. */
-const componentOfKind: Partial<Record<Block['kind'], string>> = { Sect: 'Section', L: 'List', LI: 'ListItem', LBody: '' };
+/** The component behind each structure tag that differs from it. A list item's body comes from its `<ListItem>`. */
+const COMPONENT_OF_KIND: Partial<Record<Block['kind'], string>> = { Sect: 'Section', L: 'List', LI: 'ListItem', LBody: 'ListItem' };
+/** The component a block of this kind comes from, for paths and error messages. */
+export const componentOf = (kind: Block['kind']): string => COMPONENT_OF_KIND[kind] ?? kind;
 
 /**
  * An empty `alt` (as in HTML's `alt=""`) renders as decoration, but is more often a forgotten

@@ -5,6 +5,7 @@ import type { ArtifactType, PageInfo, RunningContent } from './components.js';
 import { round2, ValidationError, within } from './diagnostics.js';
 import {
   type Block,
+  componentOf,
   type ContainerBlock,
   type ContainerKind,
   type DocumentModel,
@@ -109,24 +110,8 @@ const EPSILON = 0.01;
 /** Space between a list item's label and its content, in points. */
 const LABEL_GAP = 6;
 
-const CONTAINER_COMPONENT: Record<ContainerKind, string> = {
-  Sect: 'Section',
-  L: 'List',
-  LI: 'ListItem',
-  LBody: 'ListItem',
-  Table: 'Table',
-  TR: 'TR',
-  Artifact: 'Artifact',
-};
-/** The component a block comes from, for error messages. */
-const elementName = (block: BoxBlock) =>
-  'children' in block
-    ? CONTAINER_COMPONENT[block.kind]
-    : block.kind === 'Image'
-      ? 'Image'
-      : block.inParent
-        ? 'ListItem'
-        : block.kind;
+/** The component a block comes from, for error messages. A list item's text comes from its `<ListItem>`. */
+const elementName = (block: BoxBlock) => ('inParent' in block && block.inParent ? 'ListItem' : componentOf(block.kind));
 /** A block that has a box: everything but a page break. */
 type BoxBlock = TextBlock | ContainerBlock | ImageBlock;
 const isContainer = (block: LaidOutBlock): block is LaidOutContainer => 'children' in block;
