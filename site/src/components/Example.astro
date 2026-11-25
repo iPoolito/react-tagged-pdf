@@ -1,0 +1,75 @@
+---
+// One example: its source, the PDF it renders and veraPDF's PDF/UA-1 verdict on that PDF.
+// The data comes from src/data/examples.json, written by `npm run examples` at build time.
+import { Badge, Code } from '@astrojs/starlight/components';
+import examples from '../data/examples.json';
+
+interface Props {
+  /** File name in the repository's examples/ folder, without `.tsx`. */
+  name: string;
+}
+
+const { name } = Astro.props;
+const example = examples.find((e) => e.name === name);
+if (!example) throw new Error(`No example named "${name}" in src/data/examples.json`);
+
+const pdfUrl = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${example.pdf}`;
+const sourceUrl = `https://github.com/iPoolito/react-tagged-pdf/blob/main/examples/${name}.tsx`;
+const { status, profile, validator, failedRules } = example.verapdf;
+const badge =
+  status === 'passed'
+    ? { text: `veraPDF ${profile}: passed`, variant: 'success' as const }
+    : status === 'failed'
+      ? { text: `veraPDF ${profile}: failed`, variant: 'danger' as const }
+      : { text: `veraPDF ${profile}: not validated`, variant: 'caution' as const };
+---
+
+<p class="example-badge">
+  <Badge text={badge.text} variant={badge.variant} size="medium" />
+  <span class="validator">Checked at build time with <code>{validator}</code>, machine checks only.</span>
+</p>
+
+{
+  status === 'failed' && (
+    <ul>
+      {failedRules.map((r) => (
+        <li>
+          <code>{r.rule}</code> ({r.failedChecks} failed checks): {r.description}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+<h2 id="rendered-pdf">Rendered PDF</h2>
+<iframe class="example-pdf" src={pdfUrl} title={`Rendered PDF of the ${name} example`} loading="lazy"></iframe>
+<p>
+  If the PDF does not show above, <a href={pdfUrl}>open {name}.pdf</a> directly. Inspect its tags in Acrobat's
+  Tags panel, or with a screen reader.
+</p>
+
+<h2 id="source">Source</h2>
+<p>
+  <a href={sourceUrl}><code>examples/{name}.tsx</code></a>; file paths in it are relative to the repository's
+  <code>examples/</code> folder.
+</p>
+<Code code={example.source} lang="tsx" title={`${name}.tsx`} />
+
+<style>
+  .example-badge {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+  }
+  .validator {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+  .example-pdf {
+    width: 100%;
+    height: 80vh;
+    min-height: 28rem;
+    border: 1px solid var(--sl-color-gray-5);
+  }
+</style>

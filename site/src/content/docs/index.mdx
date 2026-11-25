@@ -1,0 +1,28 @@
+---
+title: react-tagged-pdf
+description: Render React components to tagged PDF in Node. Output passes the veraPDF PDF/UA-1 machine checks.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Render React components to **tagged PDF** in Node: every heading, paragraph, list, link, image and table becomes
+an element in the PDF structure tree, so screen readers and other assistive technology can read the document
+in order and with its meaning.
+
+Output passes the [veraPDF](https://verapdf.org) **PDF/UA-1** machine checks. That is all it claims: passing
+them means the file is technically well formed, not that the document is accessible, and it is not a claim of
+compliance with any law or guideline. See [Author responsibilities](guides/author-responsibilities/).
+
+:::note
+Status: v0.0.1, early. The API may change before 1.0.
+:::
+
+Every example in these docs is rendered and validated with veraPDF when the site is built; each page shows the
+source, the PDF it produced and veraPDF's result for that PDF.
+
+<CardGrid>
+  <LinkCard title="Getting started" href="getting-started/" description="Install and render your first tagged PDF." />
+  <LinkCard title="Examples" href="examples/hello/" description="Source, rendered PDF and veraPDF result for each example." />
+  <LinkCard title="Validating your PDFs" href="guides/validation/" description="Run veraPDF and PAC, and what neither can check." />
+  <LinkCard title="Components" href="reference/components/" description="Every component, its props and the tag it produces." />
+</CardGrid>
