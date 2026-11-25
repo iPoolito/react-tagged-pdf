@@ -1,5 +1,7 @@
-export { Document, H1, H2, H3, H4, H5, H6, Link, List, ListItem, P, Page, PageBreak, Section, Span } from './components.js';
+export { Artifact, Document, H1, H2, H3, H4, H5, H6, Link, List, ListItem, P, Page, PageBreak, Section, Span } from './components.js';
 export type {
+  ArtifactProps,
+  ArtifactType,
   BlockProps,
   CommonProps,
   DocumentProps,
@@ -9,11 +11,13 @@ export type {
   ListItemProps,
   ListProps,
   PageBreakProps,
+  PageInfo,
   PageMargin,
   PageProps,
   PageSize,
   PageSizeName,
   PProps,
+  RunningContent,
   SectionProps,
   SpanProps,
 } from './components.js';

@@ -2,7 +2,7 @@
 // level is configured in createPdfDocument(); keep the workarounds there.
 import PDFDocument from 'pdfkit';
 import { DEFAULT_FONT_PATH } from './fonts.js';
-import type { Frame, LaidOutBlock, LaidOutPage, LaidOutText, Line, Measure } from './layout.js';
+import type { Frame, LaidOutArtifact, LaidOutBlock, LaidOutPage, LaidOutText, Line, Measure } from './layout.js';
 import type { InlineElement, LinkTarget } from './model.js';
 import type { TextStyle } from './style.js';
 
@@ -98,12 +98,18 @@ export function paint(doc: PdfDoc, pages: LaidOutPage[]): void {
   for (const page of pages) {
     const { width, height, margin } = page.geometry;
     doc.addPage({ size: [width, height], margins: margin });
+    // Before any structure content on the page: artifact marking would close it.
+    for (const artifact of page.artifacts) paintArtifact(doc, artifact);
     for (const block of page.blocks) paintBlock(doc, root, block, elements);
   }
   root.end();
 }
 
 function paintBlock(doc: PdfDoc, parent: StructElem, block: LaidOutBlock, elements: Map<object, StructElem>): void {
+  if (block.kind === 'Artifact') {
+    paintArtifact(doc, { type: block.source.artifact ?? 'Layout', blocks: [block] });
+    return;
+  }
   // Decoration first, while no structure content is open (artifact marking would close it).
   if (block.frame) paintFrame(doc, block.frame);
   if (!('children' in block) && block.source.inParent) {
@@ -201,9 +207,36 @@ function linkSpans(line: Line): LinkSpan[] {
   return spans;
 }
 
+/**
+ * Decoration or running content: one artifact marked-content sequence holding every frame, line
+ * and underline of the blocks, with no structure elements. Screen readers skip it.
+ */
+function paintArtifact(doc: PdfDoc, { type, blocks }: LaidOutArtifact): void {
+  doc.markContent('Artifact', { type });
+  const draw = (block: LaidOutBlock) => {
+    if (block.frame) drawFrame(doc, block.frame);
+    if ('children' in block) return block.children.forEach(draw);
+    for (const line of block.lines) {
+      for (const { text, x, y, width, run, underline } of line.fragments) {
+        useFont(doc, run.style).fillColor(run.style.color);
+        doc.text(text, x, y, { lineBreak: false });
+        if (underline) doc.rect(x, underline.y, width, underline.thickness).fill(run.style.color);
+      }
+    }
+  };
+  blocks.forEach(draw);
+  doc.endMarkedContent();
+}
+
 /** Background and border are decoration: Layout artifacts, absent from the structure tree. */
-function paintFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom }: Frame): void {
+function paintFrame(doc: PdfDoc, frame: Frame): void {
   doc.markContent('Artifact', { type: 'Layout' });
+  drawFrame(doc, frame);
+  doc.endMarkedContent();
+}
+
+/** Draws a frame's background and border; the caller marks it as content. */
+function drawFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom }: Frame): void {
   doc.save();
   if (box.backgroundColor) doc.rect(x, y, width, height).fill(box.backgroundColor);
   const b = box.borderWidth;
@@ -223,7 +256,6 @@ function paintFrame(doc: PdfDoc, { x, y, width, height, box, openTop, openBottom
     doc.stroke(box.borderColor);
   }
   doc.restore();
-  doc.endMarkedContent();
 }
 
 export function toBuffer(doc: PdfDoc): Promise<Buffer> {

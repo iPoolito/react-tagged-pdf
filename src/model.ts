@@ -1,6 +1,6 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
-import { HostType } from './components.js';
+import { type ArtifactType, HostType, type RunningContent } from './components.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
@@ -22,8 +22,11 @@ import {
  * `Lbl` is a list item's generated bullet or number.
  */
 export type TextKind = 'P' | HeadingKind | 'Lbl';
-/** Structure tag of a block that holds other blocks. */
-export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody';
+/**
+ * Structure tag of a block that holds other blocks. `Artifact` is not a structure element: it and
+ * everything in it are painted as one artifact.
+ */
+export type ContainerKind = 'Sect' | 'L' | 'LI' | 'LBody' | 'Artifact';
 /** Structure tag of any block-level element. */
 export type BlockKind = TextKind | ContainerKind;
 /**
@@ -60,8 +63,9 @@ export type TextBlock = {
   inParent?: true;
 };
 /**
- * A block of blocks: a `<Section>`, a `<List>`, a `<ListItem>` or a list item's body. `label` is a
- * list item's bullet or number; layout puts it in the list's indent, on its body's first line.
+ * A block of blocks: a `<Section>`, a `<List>`, a `<ListItem>`, a list item's body or an
+ * `<Artifact>`. `label` is a list item's bullet or number; layout puts it in the list's indent, on
+ * its body's first line. `artifact` is an `<Artifact>`'s type.
  */
 export type ContainerBlock = {
   kind: ContainerKind;
@@ -69,14 +73,20 @@ export type ContainerBlock = {
   lang?: string;
   box: BoxStyle;
   label?: TextBlock;
+  artifact?: ArtifactType;
 };
 /** Forces the following content onto a new page. Not tagged. */
 export type PageBreakBlock = { kind: 'PageBreak' };
 export type Block = TextBlock | ContainerBlock | PageBreakBlock;
 /** Page size and margins in points. */
 export type PageGeometry = { width: number; height: number; margin: Sides };
-/** One `<Page>` template: its geometry and the blocks that flow onto as many physical pages as needed. */
-export type PageModel = { geometry: PageGeometry; blocks: Block[] };
+/**
+ * One `<Page>` template: its geometry, the blocks that flow onto as many physical pages as
+ * needed, and the running header and footer repeated on each of those pages.
+ */
+export type PageModel = { geometry: PageGeometry; blocks: Block[]; header?: RunningContent; footer?: RunningContent };
+/** Where running content goes on a page. */
+export type RunningPlace = 'header' | 'footer';
 export type DocumentModel = {
   title: string;
   lang: string;
@@ -121,7 +131,7 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     const blocks = toBlocks(child, ROOT_TEXT).map((b) =>
       b.kind === 'PageBreak' || b.lang || !pageLang ? b : { ...b, lang: pageLang },
     );
-    pages.push({ geometry: pageGeometry(child), blocks });
+    pages.push({ geometry: pageGeometry(child), blocks, ...runningContent(child) });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
   return { title, lang, pages, warnings: checkHeadingLevels(pages) };
@@ -133,6 +143,8 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
   let previous: { block: TextBlock; level: number } | undefined;
   const label = (b: TextBlock) => `<${b.kind}> ${JSON.stringify(b.text.trim().slice(0, 40))}`;
   const visit = (block: Block) => {
+    // An artifact's headings are not in the structure tree, so they are not part of the outline.
+    if (block.kind === 'Artifact') return;
     if ('children' in block) return block.children.forEach(visit);
     if (block.kind === 'PageBreak' || !isHeading(block.kind)) return;
     const level = headingLevel(block.kind);
@@ -177,6 +189,11 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
       return [{ kind: 'Sect', children, box: resolveBox(own), ...common }];
     }
     if (node.type === HostType.List) return listBlock(node, inherited, depth);
+    if (node.type === HostType.Artifact) {
+      const children = toBlocks(node, inheritText(inherited, own), depth);
+      rejectLinks(children, 'Artifact', 'an artifact is skipped by assistive technology');
+      return [{ kind: 'Artifact', artifact: artifactType(node), children, box: resolveBox(own) }];
+    }
     if (node.type === HostType.ListItem) throw new Error('<ListItem> must be a child of <List>.');
     if (node.type === HostType.PageBreak) {
       const child = node.children.find((c) => !isBlank(c));
@@ -186,7 +203,7 @@ function toBlock(node: HostNode, parent: string, inherited: InheritedText, depth
   }
   const inline = parent === 'ListItem' ? 'text, <Span>, <Link>, ' : '';
   throw new Error(
-    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List> and <PageBreak> children, ` +
+    `<${parent}> may only contain ${inline}<P>, ${HEADING_RANGE}, <Section>, <List>, <Artifact> and <PageBreak> children, ` +
       `found ${describe(node)}.`,
   );
 }
@@ -259,6 +276,77 @@ function listItemBlock(el: HostElement, inherited: InheritedText, depth: ListDep
   };
   const lbody: ContainerBlock = { kind: 'LBody', children: body, box: resolveBox({}) };
   return { kind: 'LI', children: [lbody], label: lbl, box: resolveBox(own), ...(lang ? { lang } : {}) };
+}
+
+function runningContent(page: HostElement): { header?: RunningContent; footer?: RunningContent } {
+  const out: { header?: RunningContent; footer?: RunningContent } = {};
+  for (const place of ['header', 'footer'] as const) {
+    const value = page.props[place];
+    if (value === undefined) continue;
+    if (typeof value !== 'function') {
+      throw new Error(
+        `<Page> \`${place}\` must be a function of { pageNumber, totalPages } returning its content, e.g. ` +
+          `${place}={({ pageNumber, totalPages }) => <P>Page {pageNumber} of {totalPages}</P>}; got ${JSON.stringify(value)}.`,
+      );
+    }
+    out[place] = value as RunningContent;
+  }
+  return out;
+}
+
+/**
+ * The blocks of a running header or footer, from the host tree its function rendered. Text,
+ * `<Span>` and blocks are allowed; a stretch of text between blocks becomes a paragraph.
+ * Running content is an artifact, hidden from assistive technology, so it cannot hold a `<Link>`.
+ */
+export function runningBlocks(nodes: HostNode[], place: RunningPlace): Block[] {
+  const owner = `Page ${place}`;
+  const el: HostElement = { kind: 'element', type: owner, props: {}, children: [] };
+  const blocks: Block[] = [];
+  let inline: HostNode[] = [];
+  const flushText = () => {
+    const runs = mergeRuns(collectRuns({ ...el, children: inline }, ROOT_TEXT));
+    inline = [];
+    if (textOf(runs).trim() === '') return;
+    blocks.push({ kind: 'P', text: textOf(runs), runs, style: resolveText(ROOT_TEXT), box: resolveBox({}) });
+  };
+  for (const node of nodes) {
+    if (isInline(node)) {
+      inline.push(node);
+    } else {
+      flushText();
+      blocks.push(...toBlock(node, owner, ROOT_TEXT, 0));
+    }
+  }
+  flushText();
+  const noBreaks = (block: Block) => {
+    if (block.kind === 'PageBreak') throw new Error(`<${owner}> cannot contain <PageBreak>.`);
+    if ('children' in block) block.children.forEach(noBreaks);
+  };
+  blocks.forEach(noBreaks);
+  rejectLinks(blocks, owner, 'running headers and footers are artifacts, which assistive technology skips');
+  return blocks;
+}
+
+/** Artifact content cannot hold links: nothing in it is reachable by assistive technology. */
+function rejectLinks(blocks: Block[], owner: string, why: string): void {
+  const check = (block: Block) => {
+    if ('children' in block) return block.children.forEach(check);
+    if (block.kind !== 'PageBreak' && block.runs.some((run) => run.link)) {
+      throw new Error(`<${owner}> cannot contain <Link>: ${why}, so a link there could not be reached.`);
+    }
+  };
+  blocks.forEach(check);
+}
+
+const ARTIFACT_TYPES: readonly ArtifactType[] = ['Layout', 'Page', 'Pagination'];
+
+function artifactType(el: HostElement): ArtifactType {
+  const { type = 'Layout' } = el.props;
+  if (!ARTIFACT_TYPES.includes(type as ArtifactType)) {
+    throw new Error(`<Artifact> \`type\` must be 'Layout', 'Page' or 'Pagination'; got ${JSON.stringify(type)}.`);
+  }
+  return type as ArtifactType;
 }
 
 /** Paper sizes in points, portrait. */
