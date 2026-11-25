@@ -71,11 +71,8 @@ export type PageInfo = {
  */
 export type RunningContent = (info: PageInfo) => ReactNode;
 
-export type PageProps = CommonProps & {
-  /** Paper size. Default `'A4'`. */
-  size?: PageSize;
-  /** Page margins in points. Default 72 on every side. */
-  margin?: PageMargin;
+/** A `<Page>`'s running header and footer. */
+export type RunningContentProps = {
   /**
    * Running header, drawn in the top margin of every physical page: its top half a top margin
    * below the page edge. A pagination artifact: screen readers skip it and it is not in the
@@ -89,6 +86,14 @@ export type PageProps = CommonProps & {
    */
   footer?: RunningContent;
 };
+
+export type PageProps = CommonProps &
+  RunningContentProps & {
+    /** Paper size. Default `'A4'`. */
+    size?: PageSize;
+    /** Page margins in points. Default 72 on every side. */
+    margin?: PageMargin;
+  };
 /** `<PageBreak/>` takes no props and no children. */
 export type PageBreakProps = Record<string, never>;
 export type SectionProps = BlockProps;

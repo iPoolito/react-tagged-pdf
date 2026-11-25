@@ -22,6 +22,7 @@ export type {
   PageSizeName,
   PProps,
   RunningContent,
+  RunningContentProps,
   SectionProps,
   SpanProps,
   TableProps,

@@ -1,6 +1,13 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
-import { ARTIFACT_TYPES, type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
+import {
+  ARTIFACT_TYPES,
+  type ArtifactType,
+  HostType,
+  type ImageSource,
+  type RunningContent,
+  type RunningContentProps,
+} from './components.js';
 import { type Diagnostic, round2, type ValidationCode, ValidationError, within } from './diagnostics.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
@@ -110,7 +117,7 @@ export type PageGeometry = { width: number; height: number; margin: Sides };
  * One `<Page>` template: its geometry, the blocks that flow onto as many physical pages as
  * needed, and the running header and footer repeated on each of those pages.
  */
-export type PageModel = { geometry: PageGeometry; blocks: Block[]; header?: RunningContent; footer?: RunningContent };
+export type PageModel = { geometry: PageGeometry; blocks: Block[] } & RunningContentProps;
 /** Where running content goes on a page. */
 export type RunningPlace = 'header' | 'footer';
 export type DocumentModel = {
@@ -587,8 +594,8 @@ function optionalScope(el: HostElement): Scope | undefined {
   );
 }
 
-function runningContent(page: HostElement): { header?: RunningContent; footer?: RunningContent } {
-  const out: { header?: RunningContent; footer?: RunningContent } = {};
+function runningContent(page: HostElement): RunningContentProps {
+  const out: RunningContentProps = {};
   for (const place of ['header', 'footer'] as const) {
     const value = page.props[place];
     if (value === undefined) continue;
