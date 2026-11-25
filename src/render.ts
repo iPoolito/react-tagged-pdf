@@ -23,11 +23,10 @@ export async function renderToBuffer(element: ReactNode, options: RenderOptions 
   const model = buildDocumentModel(renderTree(element));
   report(model.diagnostics, options.strict === true);
   const doc = createPdfDocument(model);
-  const measure = measurerFor(doc);
-  const imageSize = imageSizer(doc);
+  const context = { measure: measurerFor(doc), imageSize: imageSizer(doc) };
   // Two passes: the flow decides the page count; then each page's header and footer can show it.
-  const pages = layoutDocument(model, measure, imageSize);
-  layoutRunningContent(pages, measure, imageSize, (content, info, place) =>
+  const pages = layoutDocument(model, context);
+  layoutRunningContent(pages, context, (content, info, place) =>
     runningBlocks(renderTree(content(info)), place),
   );
   paint(doc, pages);

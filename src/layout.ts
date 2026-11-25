@@ -38,6 +38,8 @@ export type Measurer = {
 export type Measure = (style: TextStyle) => Measurer;
 /** An image's own size in pixels, as it is displayed (after any EXIF rotation). */
 export type ImageSize = (block: ImageBlock) => { width: number; height: number };
+/** What layout needs from the paint backend: the fonts' metrics and the images' sizes. */
+export type LayoutContext = { measure: Measure; imageSize: ImageSize };
 
 /** A filled rectangle under a fragment's text (top-left origin), present when its run is underlined. */
 export type Underline = { y: number; thickness: number };
@@ -142,11 +144,11 @@ type OpenBox = {
  * lines across pages; boxes that split are sliced, and the margin adjoining a page
  * break is dropped. Every `<Page>` template starts on a new physical page.
  */
-export function layoutDocument(model: DocumentModel, measureFor: Measure, imageSize: ImageSize): LaidOutPage[] {
+export function layoutDocument(model: DocumentModel, context: LayoutContext): LaidOutPage[] {
   const pages: LaidOutPage[] = [];
   model.pages.forEach((template, index) =>
     within(`Document > ${pageSegment(index)}`, () =>
-      layoutTemplate(template, template.geometry, template.blocks, measureFor, imageSize, pages),
+      layoutTemplate(template, template.geometry, template.blocks, context, pages),
     ),
   );
   return pages;
@@ -161,12 +163,7 @@ export type RunningBlocks = (content: RunningContent, info: PageInfo, place: Run
  * margin above the page edge) as Pagination artifacts. They live in the margins, so they never
  * move the flow; content that does not fit its margin throws.
  */
-export function layoutRunningContent(
-  pages: LaidOutPage[],
-  measureFor: Measure,
-  imageSize: ImageSize,
-  blocksFor: RunningBlocks,
-): void {
+export function layoutRunningContent(pages: LaidOutPage[], context: LayoutContext, blocksFor: RunningBlocks): void {
   // Every template lays out onto at least one physical page, so this lists them in document order.
   const templates = [...new Set(pages.map((page) => page.template))];
   pages.forEach((page, index) => {
@@ -184,7 +181,7 @@ export function layoutRunningContent(
       const band = (top: number) => {
         const out: LaidOutPage[] = [];
         const geometry = { width, height: Infinity, margin: { ...margin, top, bottom: 0 } };
-        layoutTemplate(page.template, geometry, blocks, measureFor, imageSize, out);
+        layoutTemplate(page.template, geometry, blocks, context, out);
         return out.flatMap((p) => p.blocks);
       };
       let laidOut: LaidOutBlock[];
@@ -265,8 +262,7 @@ function layoutTemplate(
   template: PageModel,
   geometry: PageGeometry,
   blocks: Block[],
-  measureFor: Measure,
-  imageSize: ImageSize,
+  { measure: measureFor, imageSize }: LayoutContext,
   pages: LaidOutPage[],
 ): void {
   const { margin } = geometry;
