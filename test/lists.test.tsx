@@ -289,7 +289,7 @@ describe('List errors', () => {
         </List>,
       ),
     ).rejects.toThrow(
-      '<ListItem> may only contain text, <Span>, <Link>, <P>, <H1>–<H6>, <Section>, <List>, <Table> and <PageBreak> children, found <Page>.',
+      '<ListItem> may only contain text, <Span>, <Link>, <P>, <H1>–<H6>, <Section>, <List>, <Table>, <Artifact> and <PageBreak> children, found <Page>.',
     );
   });
 

@@ -1,6 +1,7 @@
 // Layout pass: block flow onto physical pages, greedy line wrapping at UAX #14
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
+import type { ArtifactType, PageInfo, RunningContent } from './components.js';
 import {
   type Block,
   type ContainerBlock,
@@ -8,6 +9,8 @@ import {
   type DocumentModel,
   mergeAdjacent,
   type PageGeometry,
+  type PageModel,
+  type RunningPlace,
   type TextBlock,
   type TextKind,
   type TextRun,
@@ -73,8 +76,18 @@ export type LaidOutContainer = {
   children: LaidOutBlock[];
 };
 export type LaidOutBlock = LaidOutText | LaidOutContainer;
-/** One physical page of the PDF. */
-export type LaidOutPage = { geometry: PageGeometry; blocks: LaidOutBlock[] };
+/** Content painted as one artifact: absent from the structure tree, skipped by assistive technology. */
+export type LaidOutArtifact = { type: ArtifactType; blocks: LaidOutBlock[] };
+/**
+ * One physical page of the PDF: the `<Page>` template it comes from, its share of the
+ * template's flow, and its running header and footer (filled in by `layoutRunningContent`).
+ */
+export type LaidOutPage = {
+  geometry: PageGeometry;
+  template: PageModel;
+  blocks: LaidOutBlock[];
+  artifacts: LaidOutArtifact[];
+};
 
 const EPSILON = 0.01;
 /** Space between a list item's label and its content, in points. */
@@ -87,6 +100,7 @@ const CONTAINER_COMPONENT: Record<ContainerKind, string> = {
   LBody: 'ListItem',
   Table: 'Table',
   TR: 'TR',
+  Artifact: 'Artifact',
 };
 /** The component a block comes from, for error messages. */
 const elementName = (block: TextBlock | ContainerBlock) =>
@@ -121,14 +135,87 @@ type OpenBox = {
  */
 export function layoutDocument(model: DocumentModel, measureFor: Measure): LaidOutPage[] {
   const pages: LaidOutPage[] = [];
-  for (const template of model.pages) layoutTemplate(template.geometry, template.blocks, measureFor, pages);
+  for (const template of model.pages) layoutTemplate(template, template.geometry, template.blocks, measureFor, pages);
   return pages;
 }
 
-function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Measure, pages: LaidOutPage[]): void {
+/** Renders a template's running header or footer for one physical page into blocks. */
+export type RunningBlocks = (content: RunningContent, info: PageInfo, place: RunningPlace) => Block[];
+
+/**
+ * Second layout pass: once the number of physical pages is known, lays out each page's running
+ * header (its top half a top margin below the page edge) and footer (its bottom half a bottom
+ * margin above the page edge) as Pagination artifacts. They live in the margins, so they never
+ * move the flow; content that does not fit its margin throws.
+ */
+export function layoutRunningContent(pages: LaidOutPage[], measureFor: Measure, blocksFor: RunningBlocks): void {
+  pages.forEach((page, index) => {
+    const info: PageInfo = { pageNumber: index + 1, totalPages: pages.length };
+    const { width, height, margin } = page.geometry;
+    for (const place of ['header', 'footer'] as const) {
+      const content = page.template[place];
+      if (!content) continue;
+      const blocks = blocksFor(content, info, place);
+      if (blocks.length === 0) continue;
+      /** The band's blocks laid out from `top` with no page breaks. */
+      const band = (top: number) => {
+        const out: LaidOutPage[] = [];
+        const geometry = { width, height: Infinity, margin: { ...margin, top, bottom: 0 } };
+        layoutTemplate(page.template, geometry, blocks, measureFor, out);
+        return out.flatMap((p) => p.blocks);
+      };
+      let laidOut: LaidOutBlock[];
+      if (place === 'header') {
+        laidOut = band(margin.top / 2);
+        const { bottom } = extentOf(laidOut);
+        if (bottom > margin.top + EPSILON) throw tooTall(place, bottom - margin.top / 2, margin.top / 2, info);
+      } else {
+        const { top, bottom } = extentOf(band(0));
+        laidOut = band(height - margin.bottom / 2 - bottom);
+        if (bottom - top > margin.bottom / 2 + EPSILON) throw tooTall(place, bottom - top, margin.bottom / 2, info);
+      }
+      page.artifacts.push({ type: 'Pagination', blocks: laidOut });
+    }
+  });
+}
+
+const tooTall = (place: RunningPlace, needed: number, room: number, info: PageInfo) =>
+  new Error(
+    `<Page> ${place} on page ${info.pageNumber} is ${Number(needed.toFixed(2))} pt tall but only ` +
+      `${Number(room.toFixed(2))} pt fit (half the ${place === 'header' ? 'top' : 'bottom'} margin); ` +
+      `make the ${place} smaller or the margin larger.`,
+  );
+
+/** Top of the highest and bottom of the lowest painted thing (line or frame) among laid-out blocks. */
+function extentOf(blocks: LaidOutBlock[]): { top: number; bottom: number } {
+  let top = Infinity;
+  let bottom = -Infinity;
+  const visit = (block: LaidOutBlock) => {
+    if (block.frame) {
+      top = Math.min(top, block.frame.y);
+      bottom = Math.max(bottom, block.frame.y + block.frame.height);
+    }
+    if (isContainer(block)) return block.children.forEach(visit);
+    for (const line of block.lines) {
+      top = Math.min(top, line.top);
+      bottom = Math.max(bottom, line.top + line.height);
+    }
+  };
+  blocks.forEach(visit);
+  return bottom === -Infinity ? { top: 0, bottom: 0 } : { top, bottom };
+}
+
+function layoutTemplate(
+  template: PageModel,
+  geometry: PageGeometry,
+  blocks: Block[],
+  measureFor: Measure,
+  pages: LaidOutPage[],
+): void {
   const { margin } = geometry;
   const bottom = geometry.height - margin.bottom;
-  let page: LaidOutPage = { geometry, blocks: [] };
+  const newPhysicalPage = (): LaidOutPage => ({ geometry, template, blocks: [], artifacts: [] });
+  let page = newPhysicalPage();
   pages.push(page);
   let y = margin.top;
   /** True right after a page break: the next margin adjoins the break and is dropped. */
@@ -181,7 +268,7 @@ function layoutTemplate(geometry: PageGeometry, blocks: Block[], measureFor: Mea
       }
     }
 
-    page = { geometry, blocks: [] };
+    page = newPhysicalPage();
     pages.push(page);
     y = margin.top;
     atBreak = true;
