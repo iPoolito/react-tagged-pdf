@@ -177,7 +177,8 @@ function checkHeadingLevels(pages: PageModel[]): string[] {
 function checkTableHeaders(pages: PageModel[]): string[] {
   const warnings: string[] = [];
   const visit = (block: Block) => {
-    if (!('children' in block)) return;
+    // An artifact is hidden from assistive technology: a table in it is decoration, not data.
+    if (!('children' in block) || block.kind === 'Artifact') return;
     if (block.kind !== 'Table') return block.children.forEach(visit);
     const cells = block.children.flatMap((row) => ('children' in row ? row.children : []));
     if (cells.some((cell) => cell.kind === 'TH')) return;

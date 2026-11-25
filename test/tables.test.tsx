@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
-import { Document, H1, P, Page, type PageProps, Table, TD, TH, TR, renderToBuffer } from '../src/index.js';
+import { Artifact, Document, H1, P, Page, type PageProps, Table, TD, TH, TR, renderToBuffer } from '../src/index.js';
 import { paintedRects, structOutline, textRuns } from './support/read-pdf.js';
 
 const render = (children: ReactNode, page: Omit<PageProps, 'children'> = {}) =>
@@ -264,6 +264,19 @@ describe('Table warnings', () => {
     );
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toContain('<Table> starting "Apples" has no <TH> header cells');
+  });
+
+  it('does not warn for a decorative table inside an Artifact, which is not in the structure tree', async () => {
+    await render(
+      <Artifact>
+        <Table>
+          <TR>
+            <TD>Ornament</TD>
+          </TR>
+        </Table>
+      </Artifact>,
+    );
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('does not warn when a table has a TH', async () => {
