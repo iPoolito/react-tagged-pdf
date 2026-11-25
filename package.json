@@ -50,6 +50,7 @@
     "example:inline": "tsx examples/inline.tsx",
     "example:lists": "tsx examples/lists.tsx",
     "example:tables": "tsx examples/tables.tsx",
+    "example:long-table": "tsx examples/long-table.tsx",
     "example:headers": "tsx examples/headers-footers.tsx",
     "example:images": "tsx examples/images.tsx",
     "prepack": "npm run build"

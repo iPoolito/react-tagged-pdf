@@ -1,6 +1,7 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
 import { type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
+import type { Diagnostic } from './diagnostics.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
@@ -116,8 +117,8 @@ export type DocumentModel = {
   title: string;
   lang: string;
   pages: PageModel[];
-  /** Accessibility problems that do not stop rendering; reported with `console.warn`. */
-  warnings: string[];
+  /** Accessibility problems: warnings by default, an error in strict mode. */
+  diagnostics: Diagnostic[];
 };
 
 const componentName: Record<string, string> = Object.fromEntries(
@@ -159,73 +160,93 @@ export function buildDocumentModel(roots: HostNode[]): DocumentModel {
     pages.push({ geometry: pageGeometry(child), blocks, ...runningContent(child) });
   }
   if (pages.length === 0) throw new Error('<Document> must contain at least one <Page>.');
-  return { title, lang, pages, warnings: [...checkHeadingLevels(pages), ...checkTableHeaders(pages), ...checkImageAlts(pages)] };
+  const diagnostics = [...checkHeadingLevels(pages), ...checkTableHeaders(pages), ...checkImageAlts(pages)];
+  return { title, lang, pages, diagnostics };
 }
+
+/**
+ * Visit every block in the structure tree with the path of components leading to it, e.g.
+ * `Document > Page[1] > Section > H3`. Artifacts are skipped: they are hidden from assistive
+ * technology, so nothing in them is an accessibility problem.
+ */
+function visitStructure(pages: PageModel[], visit: (block: Exclude<Block, PageBreakBlock>, path: string) => void): void {
+  const walk = (block: Block, parent: string) => {
+    if (block.kind === 'Artifact' || block.kind === 'PageBreak') return;
+    const name = componentOfKind[block.kind] ?? block.kind;
+    const path = name ? `${parent} > ${name}` : parent;
+    visit(block, path);
+    if ('children' in block) block.children.forEach((child) => walk(child, path));
+  };
+  pages.forEach((page, i) => page.blocks.forEach((block) => walk(block, `Document > Page[${i + 1}]`)));
+}
+
+/** The component behind a structure tag, where they differ. A list item's body is not a component. */
+const componentOfKind: Partial<Record<Block['kind'], string>> = { Sect: 'Section', L: 'List', LI: 'ListItem', LBody: '' };
 
 /**
  * An empty `alt` (as in HTML's `alt=""`) renders as decoration, but is more often a forgotten
  * description than a decision: ask for `decorative` to say so explicitly.
  */
-function checkImageAlts(pages: PageModel[]): string[] {
-  const warnings: string[] = [];
-  const visit = (block: Block) => {
-    // Everything in an artifact is decoration, an image with or without alt included.
-    if (block.kind === 'Artifact') return;
-    if ('children' in block) return block.children.forEach(visit);
-    if (block.kind === 'Image' && block.alt === '') {
-      warnings.push(
+function checkImageAlts(pages: PageModel[]): Diagnostic[] {
+  const found: Diagnostic[] = [];
+  visitStructure(pages, (block, path) => {
+    if (block.kind !== 'Image' || block.alt !== '') return;
+    found.push({
+      code: 'RTP_IMAGE_EMPTY_ALT',
+      path,
+      message:
         `${imageLabel(block.src)} has an empty \`alt\`, so it is drawn as decoration that screen readers skip. ` +
-          'If it conveys information, describe it in `alt`; if it is decorative, use `decorative` instead.',
-      );
-    }
-  };
-  pages.forEach((page) => page.blocks.forEach(visit));
-  return warnings;
+        'If it conveys information, describe it in `alt`; if it is decorative, use `decorative` instead.',
+    });
+  });
+  return found;
 }
 
 /** Headings must start at H1 and never skip a level going down (PDF/UA-1, veraPDF rule 7.4.2-1). */
-function checkHeadingLevels(pages: PageModel[]): string[] {
-  const warnings: string[] = [];
+function checkHeadingLevels(pages: PageModel[]): Diagnostic[] {
+  const found: Diagnostic[] = [];
   let previous: { block: TextBlock; level: number } | undefined;
   const label = (b: TextBlock) => `<${b.kind}> ${JSON.stringify(b.text.trim().slice(0, 40))}`;
-  const visit = (block: Block) => {
-    // An artifact's headings are not in the structure tree, so they are not part of the outline.
-    if (block.kind === 'Artifact') return;
-    if ('children' in block) return block.children.forEach(visit);
-    if (block.kind === 'PageBreak' || block.kind === 'Image' || !isHeading(block.kind)) return;
+  visitStructure(pages, (block, path) => {
+    if (block.kind === 'Image' || 'children' in block || !isHeading(block.kind)) return;
     const level = headingLevel(block.kind);
     if (!previous && level > 1) {
-      warnings.push(`Heading ${label(block)} is the first heading; PDF/UA expects the first heading to be an <H1>.`);
+      found.push({
+        code: 'RTP_HEADING_FIRST_NOT_H1',
+        path,
+        message: `Heading ${label(block)} is the first heading; PDF/UA expects the first heading to be an <H1>.`,
+      });
     } else if (previous && level > previous.level + 1) {
-      const skipped = previous.level + 1;
-      warnings.push(
-        `Heading ${label(block)} follows ${label(previous.block)} and skips level ${skipped}; ` +
+      found.push({
+        code: 'RTP_HEADING_SKIP',
+        path,
+        message:
+          `Heading ${label(block)} follows ${label(previous.block)} and skips level ${previous.level + 1}; ` +
           'PDF/UA does not allow skipped heading levels (use consecutive levels).',
-      );
+      });
     }
     previous = { block, level };
-  };
-  pages.forEach((page) => page.blocks.forEach(visit));
-  return warnings;
+  });
+  return found;
 }
 
 /** A table without header cells cannot tell a screen reader what its data cells mean. */
-function checkTableHeaders(pages: PageModel[]): string[] {
-  const warnings: string[] = [];
-  const visit = (block: Block) => {
-    // An artifact is hidden from assistive technology: a table in it is decoration, not data.
-    if (!('children' in block) || block.kind === 'Artifact') return;
-    if (block.kind !== 'Table') return block.children.forEach(visit);
+function checkTableHeaders(pages: PageModel[]): Diagnostic[] {
+  const found: Diagnostic[] = [];
+  visitStructure(pages, (block, path) => {
+    if (block.kind !== 'Table') return;
     const cells = block.children.flatMap((row) => ('children' in row ? row.children : []));
     if (cells.some((cell) => cell.kind === 'TH')) return;
     const first = cells.map((cell) => ('text' in cell ? cell.text.trim() : '')).find((text) => text !== '') ?? '';
-    warnings.push(
-      `<Table> starting ${JSON.stringify(first.slice(0, 40))} has no <TH> header cells; screen readers need ` +
+    found.push({
+      code: 'RTP_TABLE_NO_TH',
+      path,
+      message:
+        `<Table> starting ${JSON.stringify(first.slice(0, 40))} has no <TH> header cells; screen readers need ` +
         'header cells to announce which row and column a data cell belongs to. Use <TH> for its headers.',
-    );
-  };
-  pages.forEach((page) => page.blocks.forEach(visit));
-  return warnings;
+    });
+  });
+  return found;
 }
 
 const isHeading = (kind: string): kind is HeadingKind => (HEADING_KINDS as readonly string[]).includes(kind);
