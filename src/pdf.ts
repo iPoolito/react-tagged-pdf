@@ -5,6 +5,7 @@ import { ValidationError } from './diagnostics.js';
 import { DEFAULT_FONT_PATH } from './fonts.js';
 import type { ImageSource } from './components.js';
 import type {
+  Fragment,
   Frame,
   ImageSize,
   LaidOutArtifact,
@@ -250,7 +251,8 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
   };
 
   for (const line of block.lines) {
-    for (const { text, x, y, width, run, underline } of line.fragments) {
+    for (const fragment of line.fragments) {
+      const { run } = fragment;
       if (!open || open.inline !== run.inline) {
         // Close first: text before an inline element must precede that element among its parent's kids.
         close();
@@ -258,10 +260,7 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
         const tag = run.inline?.kind ?? (block.source.inParent ? 'LBody' : block.kind);
         open = { inline: run.inline, owner, content: doc.markStructureContent(tag) };
       }
-      useFont(doc, run.style).fillColor(run.style.color);
-      doc.text(text, x, y, { lineBreak: false });
-      // Inside the same marked content as the text it decorates: never untagged.
-      if (underline) doc.rect(x, underline.y, width, underline.thickness).fill(run.style.color);
+      drawFragment(doc, fragment);
     }
     for (const { link, x, width } of linkSpans(line)) {
       // @types/pdfkit lacks structParent; passing a variable (not a literal) skips the excess-property check.
@@ -274,6 +273,16 @@ function paintText(doc: PdfDoc, blockElem: StructElem, block: LaidOutText, eleme
     }
   }
   close();
+}
+
+/**
+ * Draws a fragment's text and its underline, if any; the caller marks it as content. The underline
+ * is drawn inside the same marked content as the text it decorates, so it is never untagged.
+ */
+function drawFragment(doc: PdfDoc, { text, x, y, width, run, underline }: Fragment): void {
+  useFont(doc, run.style).fillColor(run.style.color);
+  doc.text(text, x, y, { lineBreak: false });
+  if (underline) doc.rect(x, underline.y, width, underline.thickness).fill(run.style.color);
 }
 
 /**
@@ -309,13 +318,7 @@ function paintArtifact(doc: PdfDoc, { type, blocks }: LaidOutArtifact): void {
     if ('children' in block) return block.children.forEach(draw);
     // Inside an artifact an image is decoration whatever its alt: there is no Figure to carry it.
     if (block.kind === 'Image') return drawImage(doc, block);
-    for (const line of block.lines) {
-      for (const { text, x, y, width, run, underline } of line.fragments) {
-        useFont(doc, run.style).fillColor(run.style.color);
-        doc.text(text, x, y, { lineBreak: false });
-        if (underline) doc.rect(x, underline.y, width, underline.thickness).fill(run.style.color);
-      }
-    }
+    for (const line of block.lines) line.fragments.forEach((fragment) => drawFragment(doc, fragment));
   };
   blocks.forEach(draw);
   doc.endMarkedContent();
