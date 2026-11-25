@@ -372,9 +372,11 @@ function layoutTemplate(
   };
 
   /**
-   * A table as one unit: columns side by side, each row as tall as its tallest cell, every cell's
-   * frame as tall as its row. It must fit on one page; when it does not fit below content already
-   * on the current page, it moves to the next page whole.
+   * A table: columns side by side, each row as tall as its tallest cell, every cell's frame as
+   * tall as its row. Rows flow down the page and continue on the next page, breaking only between
+   * rows: a row is never split, and one taller than a page throws. The first row is kept with the
+   * second, so a header row is never left alone at the bottom of a page. Every page's rows are a
+   * fragment of the same table, painted as one Table element.
    */
   const placeTable = (box: OpenBox, table: ContainerBlock) => {
     const columns = table.columns ?? [];
@@ -405,19 +407,23 @@ function layoutTemplate(
       });
       return { row: row as ContainerBlock, cells, height: Math.max(...cells.map((c) => c.height)) };
     });
-    const height = rows.reduce((sum, r) => sum + r.height, 0);
-    const end = () => y + height + table.box.padding.bottom + table.box.borderWidth;
-    if (end() > bottom + EPSILON && hasContent) newPage();
-    if (end() > bottom + EPSILON) {
-      const first = rows.flatMap((r) => r.cells).find((c) => c.cell.text.trim())?.cell.text.trim() ?? '';
-      throw new Error(
-        `<Table> starting ${JSON.stringify(first.slice(0, 40))} is ${round(height)} pt tall and does not fit on one ` +
-          `page (${round(bottom - y)} pt available); tables that continue onto the next page are not supported yet.`,
-      );
-    }
+    const first = rows.flatMap((r) => r.cells).find((c) => c.cell.text.trim())?.cell.text.trim() ?? '';
+    /** Height a row needs below `y`: the table's bottom padding and border follow the last row. */
+    const need = (index: number) =>
+      rows[index]!.height + (index === rows.length - 1 ? table.box.padding.bottom + table.box.borderWidth : 0);
 
-    const fragment = box.fragment as LaidOutContainer;
-    for (const { row, cells, height: rowHeight } of rows) {
+    rows.forEach(({ row, cells, height: rowHeight }, index) => {
+      // The first row is kept with the second: both move to the next page if they do not fit together.
+      const keep = index === 0 && rows.length > 1 ? need(0) + need(1) : need(index);
+      if (y + keep > bottom + EPSILON && hasContent) newPage();
+      if (y + need(index) > bottom + EPSILON) {
+        throw new Error(
+          `<TR> ${index + 1} of the <Table> starting ${JSON.stringify(first.slice(0, 40))} is ${round(rowHeight)} pt ` +
+            `tall and does not fit on one page (${round(bottom - y)} pt available); a table row is never split across pages.`,
+        );
+      }
+      // After a page break the table continues in a new fragment.
+      const fragment = box.fragment as LaidOutContainer;
       const tr: LaidOutContainer = { kind: 'TR', source: row, ...(row.lang ? { lang: row.lang } : {}), children: [] };
       fragment.children.push(tr);
       let x = box.innerX;
@@ -443,9 +449,9 @@ function layoutTemplate(
         x += widths[column]!;
       });
       y += rowHeight;
-    }
-    atBreak = false;
-    hasContent = true;
+      atBreak = false;
+      hasContent = true;
+    });
   };
 
   /**

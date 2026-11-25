@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
-import { Artifact, Document, H1, P, Page, type PageProps, Table, TD, TH, TR, renderToBuffer } from '../src/index.js';
+import { Artifact, Document, P, Page, type PageProps, Table, TD, TH, TR, renderToBuffer } from '../src/index.js';
 import { paintedRects, structOutline, textRuns } from './support/read-pdf.js';
 
 const render = (children: ReactNode, page: Omit<PageProps, 'children'> = {}) =>
@@ -225,23 +225,110 @@ describe('Table pages', () => {
     </Table>
   );
 
-  it('a table that does not fit below the content on a page moves to the next page whole', async () => {
-    const pdf = await render(
+  const small = (
+    <Table>
+      <TR>
+        <TH>Head</TH>
+        <TH>Body</TH>
+      </TR>
+      <TR>
+        <TD>One</TD>
+        <TD>x</TD>
+      </TR>
+      <TR>
+        <TD>Two</TD>
+        <TD>y</TD>
+      </TR>
+    </Table>
+  );
+  const afterFiller = (repeats: number, table: ReactNode) =>
+    render(
       <>
-        <H1>Report</H1>
-        <P>{'Filler text. '.repeat(40)}</P>
-        {rows(6)}
+        <P>{'Filler text. '.repeat(repeats)}</P>
+        {table}
       </>,
       { size: [300, 300], margin: 20 },
     );
-    const pages = await textRuns(pdf);
-    expect(pages).toHaveLength(2);
-    expect(pages[1]!.runs.map((r) => r.str)).toEqual(['Item', ...Array.from({ length: 6 }, (_, i) => `Row ${i + 1}`)]);
+  /** The table text on each page (everything but the filler paragraph). */
+  const tableText = async (pdf: Buffer) =>
+    (await textRuns(pdf)).map((p) => p.runs.map((r) => r.str).filter((s) => s.trim() && !s.startsWith('Filler')));
+
+  it('a table that does not fit below the content on a page continues on the next page', async () => {
+    // 45 repeats leave room for the first two rows only.
+    expect(await tableText(await afterFiller(45, small))).toEqual([['Head', 'Body', 'One', 'x'], ['Two', 'y']]);
   });
 
-  it('throws when a table is taller than a page (page breaking inside tables is not supported yet)', async () => {
-    await expect(render(rows(40), { size: [300, 300], margin: 20 })).rejects.toThrow(
-      /<Table> starting "Item" is [\d.]+ pt tall and does not fit on one page .*not supported yet/,
+  it('keeps the first row with the second: a header row is never left alone at the bottom of a page', async () => {
+    // 49 repeats leave room for one row only.
+    expect(await tableText(await afterFiller(49, small))).toEqual([[], ['Head', 'Body', 'One', 'x', 'Two', 'y']]);
+  });
+
+  it('a table taller than a page continues on the next pages, breaking only between rows', async () => {
+    const pdf = await render(rows(40), { size: [300, 300], margin: 20 });
+    const pages = await textRuns(pdf);
+    expect(pages.length).toBeGreaterThan(1);
+    // Every page gets some rows, and the rows read in order across pages.
+    expect(pages.every((p) => p.runs.length > 0)).toBe(true);
+    expect(pages.flatMap((p) => p.runs.map((r) => r.str))).toEqual([
+      'Item',
+      ...Array.from({ length: 40 }, (_, i) => `Row ${i + 1}`),
+    ]);
+  });
+
+  it('is still one Table element in the structure tree when it spans pages', async () => {
+    const pdf = await render(rows(40), { size: [300, 300], margin: 20 });
+    expect(await structOutline(pdf)).toBe(
+      [
+        'Document',
+        '  Table',
+        '    TR',
+        '      TH [Scope=Column] "Item"',
+        ...Array.from({ length: 40 }, (_, i) => ['    TR', `      TD "Row ${i + 1}"`]).flat(),
+      ].join('\n'),
+    );
+  });
+
+  it('never splits a row: a row that does not fit at the bottom of a page moves to the next page whole', async () => {
+    const tall = 'A cell long enough to wrap onto several lines in its narrow column. '.repeat(2);
+    const pages = await tableText(
+      await afterFiller(
+        40,
+        <Table>
+          <TR>
+            <TH>Head</TH>
+            <TH>Body</TH>
+          </TR>
+          <TR>
+            <TD>One</TD>
+            <TD>x</TD>
+          </TR>
+          <TR>
+            <TD>Short</TD>
+            <TD>{tall}</TD>
+          </TR>
+        </Table>,
+      ),
+    );
+    expect(pages[0]).toEqual(['Head', 'Body', 'One', 'x']);
+    // Every line of the tall row is on the second page.
+    expect(pages[1]!.join(' ')).toBe(`Short ${tall.trim()}`);
+  });
+
+  it('throws when a single row is taller than a page', async () => {
+    await expect(
+      render(
+        <Table>
+          <TR>
+            <TH>Head</TH>
+          </TR>
+          <TR>
+            <TD>{'Too much text for one page. '.repeat(80)}</TD>
+          </TR>
+        </Table>,
+        { size: [300, 300], margin: 20 },
+      ),
+    ).rejects.toThrow(
+      /<TR> 2 of the <Table> starting "Head" is [\d.]+ pt tall and does not fit on one page \([\d.]+ pt available\); a table row is never split across pages\./,
     );
   });
 });
