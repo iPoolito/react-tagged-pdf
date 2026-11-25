@@ -112,7 +112,9 @@ A JPEG or PNG placed as a block. Give exactly one of `alt` or `decorative`.
 | `lang` | `string` | Language of the `alt` text when it differs from its surroundings. |
 | `style` | image style | `width`, `height` (one alone keeps the aspect ratio) and box properties. |
 
-Without a size, an image is one point per pixel, scaled down to fit the content width. It never splits across
+Without a size, an image is one point per pixel. Without a `width`, an image wider than the content width is
+scaled down to fit it, keeping its aspect ratio; an explicit `width` wider than the content width throws
+`RTP_IMAGE_TOO_WIDE`. It never splits across
 pages. An empty `alt` is drawn as decoration and reported as `RTP_IMAGE_EMPTY_ALT`.
 
 ## Table, TR, TH, TD
@@ -196,7 +198,7 @@ if (err instanceof ValidationError && err.code === 'RTP_IMAGE_NO_ALT') console.e
 | `RTP_IMAGE_NO_ALT` | `Image` has neither `alt` nor `decorative`. |
 | `RTP_IMAGE_ALT_AND_DECORATIVE` | `Image` has both `alt` and `decorative`. |
 | `RTP_IMAGE_UNREADABLE` | The image file or bytes are not a readable JPEG or PNG. |
-| `RTP_IMAGE_TOO_WIDE` | The image is wider than the content width it is in. |
+| `RTP_IMAGE_TOO_WIDE` | The image's explicit `style.width` is wider than the content width it is in. |
 | `RTP_IMAGE_TOO_TALL` | The image is taller than a page's content area. |
 | `RTP_LIST_ITEM_EMPTY` | `ListItem` has no content. |
 | `RTP_TABLE_ROW_EMPTY` | `TR` has no cells. |

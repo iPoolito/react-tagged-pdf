@@ -262,16 +262,18 @@ function emptyFragment(block: BoxBlock): LaidOutBlock {
 
 /**
  * An image's size in points: the author's width and height; with only one of them, the other
- * keeps the aspect ratio; with neither, one point per pixel, scaled down to `maxWidth`.
+ * keeps the aspect ratio; with neither, one point per pixel. Without an explicit width, an image
+ * wider than `maxWidth` is scaled down to it, keeping its aspect ratio; only an explicit width can
+ * be too wide.
  */
 function imageExtent(block: ImageBlock, imageSize: ImageSize, maxWidth: number): { width: number; height: number } {
   const { width, height } = block;
   if (width !== undefined && height !== undefined) return { width, height };
   const natural = imageSize(block);
   if (width !== undefined) return { width, height: (width * natural.height) / natural.width };
-  if (height !== undefined) return { width: (height * natural.width) / natural.height, height };
-  const scale = Math.min(1, maxWidth / natural.width);
-  return { width: natural.width * scale, height: natural.height * scale };
+  const own = height === undefined ? natural : { width: (height * natural.width) / natural.height, height };
+  const scale = Math.min(1, maxWidth / own.width);
+  return { width: own.width * scale, height: own.height * scale };
 }
 
 function layoutTemplate(

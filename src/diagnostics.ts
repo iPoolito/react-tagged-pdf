@@ -72,7 +72,7 @@ export function report(diagnostics: readonly Diagnostic[], strict: boolean): voi
  * - `RTP_IMAGE_NO_ALT`: `<Image>` has neither `alt` nor `decorative`.
  * - `RTP_IMAGE_ALT_AND_DECORATIVE`: `<Image>` has both `alt` and `decorative`.
  * - `RTP_IMAGE_UNREADABLE`: the image file or bytes are not a readable JPEG or PNG.
- * - `RTP_IMAGE_TOO_WIDE`: the image is wider than the content width it is in.
+ * - `RTP_IMAGE_TOO_WIDE`: the image's explicit `style.width` is wider than the content width it is in.
  * - `RTP_IMAGE_TOO_TALL`: the image is taller than a page's content area.
  *
  * Lists and tables

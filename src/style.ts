@@ -201,7 +201,10 @@ const TEXT_KEYS = [...INLINE_KEYS, 'lineHeight'] as const;
  * `width` and `height` are the image's own size in points, inside any padding and border.
  */
 export type ImageStyle = Omit<Style, (typeof TEXT_KEYS)[number]> & {
-  /** Points. With only `width` or `height`, the other keeps the image's aspect ratio. Default: one point per pixel. */
+  /**
+   * Points. With only `width` or `height`, the other keeps the image's aspect ratio. Default: one
+   * point per pixel. Without `width`, an image wider than its content width is scaled down to fit.
+   */
   width?: number;
   height?: number;
 };

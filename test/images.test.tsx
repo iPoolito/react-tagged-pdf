@@ -119,6 +119,11 @@ describe('Image', () => {
       expect(image!.height).toBeCloseTo(4);
     });
 
+    it('scales an image with only a height down to the content width when it would be wider', async () => {
+      // 120 × 80 px at height 400 would be 600 pt wide; A4 with 72 pt margins has 451.28 pt.
+      expect(await sizeOf({ height: 400 })).toEqual([451.28, 300.85]);
+    });
+
     it('sits inside its margin, border and padding, which are Layout artifacts', async () => {
       const pdf = await render(
         <Image src={PNG} alt="Chart" style={{ marginLeft: 10, borderWidth: 2, padding: 4, width: 60 }} />,

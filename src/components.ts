@@ -240,8 +240,10 @@ export function ListItem(props: ListItemProps) {
  * structure element whose `Alt` is the text alternative and whose `BBox` is where it is drawn;
  * with `decorative` it is a Layout artifact, absent from the structure tree. Its size comes from
  * `style.width` and `style.height` (with only one, the other keeps the aspect ratio), else from
- * its pixels at one point per pixel, scaled down to fit the content width. It never splits
- * across pages: one that does not fit the rest of the page moves to the next.
+ * its pixels at one point per pixel. Without an explicit `style.width`, an image wider than the
+ * content width is scaled down to fit it, keeping its aspect ratio; an explicit `style.width`
+ * wider than the content width throws. It never splits across pages: one that does not fit the
+ * rest of the page moves to the next.
  */
 export function Image(props: ImageProps) {
   // createElement cannot take a union of props types; the host element only needs the props as given.
