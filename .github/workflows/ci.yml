@@ -27,6 +27,25 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  react-versions:
+    # The peer range is ^19.0.0; check every React 19 minor against the pinned react-reconciler.
+    name: Unit tests (React ${{ matrix.react }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        react: ['19.0', '19.1', '19.2', '19.3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-audit --no-fund react@${{ matrix.react }}
+      - run: node -p "'react ' + require('react/package.json').version"
+      - run: npm test
+
   node20-smoke:
     # The dev toolchain needs a newer Node, so build and pack on 24, then install the tarball and
     # render with plain JavaScript on Node 20.19.0, the engines floor.
@@ -50,7 +69,7 @@ jobs:
           cd "$RUNNER_TEMP/smoke"
           node --version
           npm init -y > /dev/null
-          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/react-tagged-pdf-*.tgz react@~19.3.0
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/react-tagged-pdf-*.tgz react@^19
           node smoke.mjs
 
   verapdf:

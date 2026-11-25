@@ -7,12 +7,12 @@ document in order and with its meaning.
 Output passes the [veraPDF](https://verapdf.org) **PDF/UA-1** machine checks. That is all it claims (see
 [What you're still responsible for](#what-youre-still-responsible-for)).
 
-> Status: v0.0.1, early. The API may change before 1.0.
+> Status: v0.0.2, early. The API may change before 1.0.
 
 ## 30-second example
 
 ```bash
-npm install react-tagged-pdf react@~19.3.0
+npm install react-tagged-pdf react@^19
 npm install --save-dev tsx
 npm pkg set type=module
 echo '{ "compilerOptions": { "jsx": "react-jsx" } }' > tsconfig.json
@@ -156,7 +156,10 @@ Test with a screen reader and, where it matters, have people with disabilities r
 ## Requirements
 
 - Node.js 20.19 or later (CI runs the tests on Node 22 and 24, and a packed-tarball smoke test on Node 20.19).
-- React `~19.3.0` (peer dependency; `react-reconciler` is pinned to the matching release).
+- React 19 (`^19.0.0`, peer dependency). CI runs the test suite against React 19.0, 19.1, 19.2 and 19.3.
+- React 18 is not supported. A custom renderer talks to React through `react-reconciler`, and each
+  reconciler release works with one React line; React 18 keeps its internals in a different shape, so
+  supporting it would mean shipping and switching between two reconcilers.
 - ESM only.
 
 ## License

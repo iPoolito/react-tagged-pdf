@@ -112,7 +112,7 @@ type OpaqueRoot = unknown;
 type OnError = (error: unknown) => void;
 /**
  * The slice of the reconciler API this renderer uses. @types/react-reconciler
- * (0.34) does not track React 19.3's host-config keys or these entry points
+ * (0.31) does not track the current host-config keys or these entry points
  * precisely, so the untyped boundary is contained in this one cast.
  */
 type RenderOnceReconciler = {

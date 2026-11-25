@@ -6,13 +6,13 @@ description: Install react-tagged-pdf and render a tagged PDF from React in Node
 ## Install
 
 ```bash
-npm install react-tagged-pdf react@~19.3.0
+npm install react-tagged-pdf react@^19
 npm install --save-dev tsx
 npm pkg set type=module
 echo '{ "compilerOptions": { "jsx": "react-jsx" } }' > tsconfig.json
 ```
 
-Requirements: Node.js 20.19 or later, React `~19.3.0` (peer dependency). The package is ESM only.
+Requirements: Node.js 20.19 or later, React 19 (`^19.0.0`, peer dependency). React 18 is not supported. The package is ESM only.
 
 ## Render a PDF
 
