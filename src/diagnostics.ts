@@ -152,6 +152,9 @@ export type ValidationCode =
   | 'RTP_FONT_NOT_EMBEDDED'
   | 'RTP_STATE_UPDATE';
 
+/** A length in points as messages show it: rounded to at most two decimals. */
+export const round2 = (n: number) => Number(n.toFixed(2));
+
 /** Put `segment` in front of a validation error's path: the error happened inside that component. */
 let prependPath: (error: ValidationError, segment: string) => void;
 

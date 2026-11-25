@@ -2,7 +2,7 @@
 // break opportunities, measured with the same font metrics the paint pass uses.
 import { LineBreaker } from 'linebreak';
 import type { ArtifactType, PageInfo, RunningContent } from './components.js';
-import { ValidationError, within } from './diagnostics.js';
+import { round2, ValidationError, within } from './diagnostics.js';
 import {
   type Block,
   type ContainerBlock,
@@ -220,8 +220,8 @@ export function layoutRunningContent(
 const tooTall = (place: RunningPlace, needed: number, room: number, info: PageInfo) =>
   new ValidationError(
     'RTP_RUNNING_CONTENT_TOO_TALL',
-    `<Page> ${place} on page ${info.pageNumber} is ${Number(needed.toFixed(2))} pt tall but only ` +
-      `${Number(room.toFixed(2))} pt fit (half the ${place === 'header' ? 'top' : 'bottom'} margin); ` +
+    `<Page> ${place} on page ${info.pageNumber} is ${round2(needed)} pt tall but only ` +
+      `${round2(room)} pt fit (half the ${place === 'header' ? 'top' : 'bottom'} margin); ` +
       `make the ${place} smaller or the margin larger.`,
   );
 
@@ -381,7 +381,7 @@ function layoutTemplate(
       throw new ValidationError(
         'RTP_NO_CONTENT_WIDTH',
         `<${elementName(block)}> has no room for content: margin, border and padding leave a content width of ` +
-          `${Number(innerWidth.toFixed(2))} pt.`,
+          `${round2(innerWidth)} pt.`,
       );
     }
     const fragment = emptyFragment(block);
@@ -425,8 +425,8 @@ function layoutTemplate(
           const label = JSON.stringify(block.text.trim().slice(0, 40));
           throw new ValidationError(
             'RTP_LINE_TOO_TALL',
-            `<${elementName(block)}> ${label} has a ${Number(lineBox.height.toFixed(2))} pt line that does not fit ` +
-              `in the page content area (${Number((bottom - y).toFixed(2))} pt left below its border and padding).`,
+            `<${elementName(block)}> ${label} has a ${round2(lineBox.height)} pt line that does not fit ` +
+              `in the page content area (${round2(bottom - y)} pt left below its border and padding).`,
           );
         }
       }
@@ -459,7 +459,7 @@ function layoutTemplate(
     if (fixed > box.innerWidth + EPSILON || (flexible > 0 && !(share > 0))) {
       throw new ValidationError(
         'RTP_TABLE_TOO_WIDE',
-        `<Table> column widths add up to ${round(fixed)} pt, which leaves no room in its ${round(box.innerWidth)} pt ` +
+        `<Table> column widths add up to ${round2(fixed)} pt, which leaves no room in its ${round2(box.innerWidth)} pt ` +
           `content width${flexible > 0 ? ` for the ${flexible} column(s) without a width` : ''}.`,
       );
     }
@@ -472,8 +472,8 @@ function layoutTemplate(
         if (!(innerWidth > 0)) {
           throw new ValidationError(
             'RTP_NO_CONTENT_WIDTH',
-            `<${cell.kind}> has no room for content: its column is ${round(widths[column]!)} pt wide and its border ` +
-              `and padding leave a content width of ${round(innerWidth)} pt.`,
+            `<${cell.kind}> has no room for content: its column is ${round2(widths[column]!)} pt wide and its border ` +
+              `and padding leave a content width of ${round2(innerWidth)} pt.`,
           );
         }
         const lines = lineBoxes(cell, innerWidth, measure);
@@ -494,8 +494,8 @@ function layoutTemplate(
       if (y + need(index) > bottom + EPSILON) {
         throw new ValidationError(
           'RTP_TABLE_ROW_TOO_TALL',
-          `<TR> ${index + 1} of the <Table> starting ${JSON.stringify(first.slice(0, 40))} is ${round(rowHeight)} pt ` +
-            `tall and does not fit on one page (${round(bottom - y)} pt available); a table row is never split across pages.`,
+          `<TR> ${index + 1} of the <Table> starting ${JSON.stringify(first.slice(0, 40))} is ${round2(rowHeight)} pt ` +
+            `tall and does not fit on one page (${round2(bottom - y)} pt available); a table row is never split across pages.`,
         );
       }
       // After a page break the table continues in a new fragment.
@@ -553,7 +553,7 @@ function layoutTemplate(
     if (width > box.innerWidth + EPSILON) {
       throw new ValidationError(
         'RTP_IMAGE_TOO_WIDE',
-        `${describe()} is ${Number(width.toFixed(2))} pt wide, wider than the ${Number(box.innerWidth.toFixed(2))} pt ` +
+        `${describe()} is ${round2(width)} pt wide, wider than the ${round2(box.innerWidth)} pt ` +
           'of content width it is in; give it a smaller style.width.',
       );
     }
@@ -562,8 +562,8 @@ function layoutTemplate(
       if (y + height > bottom + EPSILON) {
         throw new ValidationError(
           'RTP_IMAGE_TOO_TALL',
-          `${describe()} is ${Number(height.toFixed(2))} pt tall and does not fit in the page content area ` +
-            `(${Number((bottom - y).toFixed(2))} pt below its border and padding); give it a smaller style.height.`,
+          `${describe()} is ${round2(height)} pt tall and does not fit in the page content area ` +
+            `(${round2(bottom - y)} pt below its border and padding); give it a smaller style.height.`,
         );
       }
     }
@@ -594,7 +594,6 @@ function layoutTemplate(
   for (const block of blocks) place(block, margin.left, geometry.width - margin.left - margin.right);
 }
 
-const round = (n: number) => Number(n.toFixed(2));
 
 /** `measureFor`, asked once per text style. */
 function memoize(measureFor: Measure): Measure {

@@ -1,7 +1,7 @@
 // Host tree -> validated document model. All authoring errors that can be
 // detected before layout are raised here, with the offending component named.
 import { type ArtifactType, HostType, type ImageSource, type RunningContent } from './components.js';
-import { type Diagnostic, type ValidationCode, ValidationError, within } from './diagnostics.js';
+import { type Diagnostic, round2, type ValidationCode, ValidationError, within } from './diagnostics.js';
 import { HEADING_KINDS, HEADING_RANGE, type HeadingKind, headingLevel } from './headings.js';
 import type { HostElement, HostNode } from './reconciler.js';
 import {
@@ -732,14 +732,13 @@ function pageGeometry(page: HostElement): PageGeometry {
   if (!(contentWidth > 0 && contentHeight > 0)) {
     throw new ValidationError(
       'RTP_PAGE_NO_CONTENT_AREA',
-      `<Page> margins leave no content area: ${round(contentWidth)} × ${round(contentHeight)} pt ` +
-        `on a ${round(width)} × ${round(height)} pt page.`,
+      `<Page> margins leave no content area: ${round2(contentWidth)} × ${round2(contentHeight)} pt ` +
+        `on a ${round2(width)} × ${round2(height)} pt page.`,
     );
   }
   return { width, height, margin: sides };
 }
 
-const round = (n: number) => Number(n.toFixed(2));
 
 function optionalLang(el: HostElement): string | undefined {
   const value = el.props.lang;
