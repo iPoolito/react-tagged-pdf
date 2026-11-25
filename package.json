@@ -53,7 +53,8 @@
     "example:long-table": "tsx examples/long-table.tsx",
     "example:headers": "tsx examples/headers-footers.tsx",
     "example:images": "tsx examples/images.tsx",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "docs:examples": "tsx scripts/build-docs-examples.ts"
   },
   "peerDependencies": {
     "react": "~19.3.0"
